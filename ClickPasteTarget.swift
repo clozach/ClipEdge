@@ -77,6 +77,11 @@ enum ClickPasteTarget {
         var point = CGPoint.zero
         var pasteEnabled: Bool? = nil
         var windowInterior: CGRect? = nil
+        /// The app answered but exposes no focused element at all, as Electron
+        /// and Chromium apps do while their page tree is off (Claude, for one).
+        var focusHidden = false
+        /// The clicked window is the app's focused window.
+        var hitInFrontWindow = false
 
         var assessment: Assessment {
             guard trusted else { return .reject("accessibility-denied") }
@@ -89,18 +94,14 @@ enum ClickPasteTarget {
                 if node.writable || node.fieldRole { break }
                 if node.boundary { break }
             }
-            guard focusOwnedByTarget, let focused else { return .retry("focus-unavailable") }
-            guard focused.enabled != false else { return .reject("disabled-focus") }
-            if focused.role == "AXWindow", focusInHitPath, sameWindow {
-                // Window-only AX apps (for example an inaccessible custom
-                // renderer) cannot prove editability. Honor the intentional raw
-                // click only in a conservative interior and only when the app
-                // advertises its ordinary Paste command as enabled.
-                guard windowInterior?.contains(point) == true else { return .reject("window-chrome") }
-                if pasteEnabled == true { return .ready }
-                if pasteEnabled == false { return .reject("paste-disabled") }
-                return .retry("window-paste-unavailable")
+            guard let focused else {
+                // An app that hides its focus gives the same evidence as a
+                // window-only app, and gets the same conservative rule.
+                return focusHidden && hitInFrontWindow ? windowFallback : .retry("focus-unavailable")
             }
+            guard focusOwnedByTarget else { return .retry("focus-unavailable") }
+            guard focused.enabled != false else { return .reject("disabled-focus") }
+            if focused.role == "AXWindow", focusInHitPath, sameWindow { return windowFallback }
             guard !focused.chrome, !focused.boundary else { return .retry("focus-not-content") }
             guard sameWindow else { return .retry("different-window") }
             let containsPoint = focused.bounds?.contains(point) == true
@@ -114,12 +115,24 @@ enum ClickPasteTarget {
             return .retry("editability-unavailable")
         }
 
+        /// Window-only AX apps (an inaccessible custom renderer such as Zed's)
+        /// and apps that hide their focus cannot prove editability. Honor the
+        /// intentional click only in a conservative interior and only when the
+        /// app advertises its ordinary Paste command as enabled.
+        private var windowFallback: Assessment {
+            guard windowInterior?.contains(point) == true else { return .reject("window-chrome") }
+            if pasteEnabled == true { return .ready }
+            if pasteEnabled == false { return .reject("paste-disabled") }
+            return .retry("window-paste-unavailable")
+        }
+
         var diagnostics: [String: Any] {
             ["trusted": trusted, "hitOwnedByTarget": hitOwnedByTarget,
              "focusOwnedByTarget": focusOwnedByTarget, "hitRoles": hitPath.map(\.role),
              "focusedRole": focused?.role ?? "", "focusInHitPath": focusInHitPath,
              "sameWindow": sameWindow, "focusContainsPoint": focused?.bounds?.contains(point) == true,
              "windowInteriorContainsPoint": windowInterior?.contains(point) == true,
+             "focusHidden": focusHidden, "hitInFrontWindow": hitInFrontWindow,
              "valueWritable": focused?.valueWritable ?? false,
              "selectedTextWritable": focused?.selectedTextWritable ?? false,
              "hasTextSelection": focused?.hasTextSelection ?? false,
@@ -206,7 +219,11 @@ enum ClickPasteTarget {
         guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success,
               let hit, owner(of: hit) == pid else { return result }
         result.hitOwnedByTarget = true
-        let focus = element(app, kAXFocusedUIElementAttribute)
+        var focusValue: CFTypeRef?
+        let focusError = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focusValue)
+        let focus = focusValue.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        // A timeout is not "hidden": it waits for the next attempt.
+        result.focusHidden = focus == nil && focusError != .cannotComplete
         result.focusOwnedByTarget = focus.map { owner(of: $0) == pid } ?? false
         result.focused = focus.map(describe)
         let hitWindow = (attribute(hit, kAXRoleAttribute) as? String) == "AXWindow" ? hit : element(hit, kAXWindowAttribute)
@@ -214,6 +231,7 @@ enum ClickPasteTarget {
         let frontWindow = element(app, kAXFocusedWindowAttribute)
         result.sameWindow = hitWindow != nil && focusWindow != nil && frontWindow != nil &&
             CFEqual(hitWindow, focusWindow) && CFEqual(focusWindow, frontWindow)
+        result.hitInFrontWindow = hitWindow != nil && frontWindow != nil && CFEqual(hitWindow, frontWindow)
         if let frontWindow, let frame = bounds(of: frontWindow) {
             result.windowInterior = windowInterior(of: frame)
         }

@@ -433,6 +433,25 @@ import ApplicationServices
         check(windowOnly.assessment == .retry("focus-not-content"), "window-only fallback requires exact focused window")
         windowOnly.sameWindow = true; windowOnly.hitPath = [.init(role: "AXButton"), windowOnly.focused!]
         check(windowOnly.assessment == .reject("control-click"), "known custom-app controls still reject window fallback")
+        // Claude's shape: groups over one window, no focused element exposed.
+        var hidden = ClickPasteTarget.Snapshot(trusted: true, hitOwnedByTarget: true,
+                                               hitPath: [.init(role: "AXScrollArea"), .init(role: "AXGroup", valueWritable: true), .init(role: "AXWindow")],
+                                               point: point, pasteEnabled: true,
+                                               windowInterior: CGRect(x: 8, y: 64, width: 784, height: 528),
+                                               focusHidden: true, hitInFrontWindow: true)
+        check(hidden.assessment == .ready, "an app hiding its focus pastes inside its focused window when Paste is enabled")
+        hidden.pasteEnabled = nil
+        check(hidden.assessment == .retry("window-paste-unavailable"), "hidden focus without Paste metadata asks for the menu")
+        hidden.pasteEnabled = false
+        check(hidden.assessment == .reject("paste-disabled"), "hidden focus honors disabled Paste")
+        hidden.pasteEnabled = true; hidden.point = CGPoint(x: 100, y: 25)
+        check(hidden.assessment == .reject("window-chrome"), "hidden focus excludes the title/tab strip")
+        hidden.point = point; hidden.hitInFrontWindow = false
+        check(hidden.assessment == .retry("focus-unavailable"), "hidden focus requires the clicked window to be the focused one")
+        hidden.hitInFrontWindow = true; hidden.focusHidden = false
+        check(hidden.assessment == .retry("focus-unavailable"), "a focus read that timed out is not treated as hidden")
+        hidden.focusHidden = true; hidden.hitPath = [.init(role: "AXLink"), .init(role: "AXWindow")]
+        check(hidden.assessment == .reject("control-click"), "visible chrome still rejects before the hidden-focus fallback")
     }
 
     private static func asynchronousInspection() {
