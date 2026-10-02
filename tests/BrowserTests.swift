@@ -35,6 +35,9 @@ import AppKit
         c.capturedAt = c.capturedAt.addingTimeInterval(120)
         browser.update(entries: [c, a, b], attachedID: c.id)
         check(firstTiles[2].tooltipText.contains(c.fullDateTimeStamp), "recopy refreshes existing tile timestamp tooltip")
+        let legend = ClipboardTileTooltip.legendText
+        check(legend.contains("Paste held item ← ⌘click") && legend.contains("Keep holding ← click") && !legend.contains("⇧click"),
+              "help legend matches Command-click paste")
 
         var picked: UUID?, hovered: UUID?, deleted: UUID?, opened: UUID?
         browser.canvas.onPick = { picked = $0.id }

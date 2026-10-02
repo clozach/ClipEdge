@@ -161,14 +161,16 @@ import PDFKit
         var events: [String] = []
         var focused: pid_t? = 99
         var pastedPoints: [NSPoint] = []
-        let click = CommandClickPaste(environment: .init(targetAt: { _ in 12345 }, windowAt: { _ in 42 }, inspectTarget: { _, _, done in done(.ready) }, frontmost: { focused }, postPaste: { _ in events.append("paste"); return true }, schedule: { _, action in queued.append(action) }))
+        let click = CommandClickPaste(environment: .init(receiverAt: { _ in (12345, 42) }, inspectTarget: { _, _, done in done(.ready) }, frontmost: { focused }, postPaste: { _ in events.append("paste"); return true }, schedule: { _, action in queued.append(action) }, keepsCommand: { _, _ in false }))
         click.onPaste = { pastedPoints.append($0) }
         click.start(observeSystemEvents: false)
         let point = CGPoint(x: 100, y: 200)
         check(!click.receive(type: .leftMouseDown, flags: .maskShift, point: point), "shift click retains attachment")
-        check(click.receive(type: .leftMouseDown, flags: [], point: point), "ordinary mouse-down starts a destination click")
+        check(!click.receive(type: .leftMouseDown, flags: [], point: point), "ordinary click retains attachment")
+        check(!click.receive(type: .leftMouseUp, flags: [], point: point) && queued.isEmpty, "ordinary click never schedules paste")
+        check(click.receive(type: .leftMouseDown, flags: .maskCommand, point: point), "Command mouse-down starts a destination click")
         check(events.isEmpty, "no paste before the user's click")
-        check(click.receive(type: .leftMouseUp, flags: [], point: point), "matching mouse-up schedules paste")
+        check(click.receive(type: .leftMouseUp, flags: .maskCommand, point: point), "matching mouse-up schedules paste")
         check(events.isEmpty, "real mouse-up finishes before target inspection")
         queued.removeFirst()()
         check(events.isEmpty, "native click owns activation; CE does not force focus")
@@ -178,25 +180,25 @@ import PDFKit
         queued.removeFirst()()
         check(events == ["paste"] && pastedPoints.count == 1, "one paste after target owns focus")
         click.start(observeSystemEvents: false)
-        _ = click.receive(type: .leftMouseDown, flags: [], point: point)
-        _ = click.receive(type: .leftMouseUp, flags: [], point: point)
+        _ = click.receive(type: .leftMouseDown, flags: .maskCommand, point: point)
+        _ = click.receive(type: .leftMouseUp, flags: .maskCommand, point: point)
         click.stop()
         queued.removeFirst()()
         check(events.count == 1, "dropping or replacing attachment cancels delayed paste")
         click.start(observeSystemEvents: false)
-        _ = click.receive(type: .leftMouseDown, flags: [], point: point)
-        _ = click.receive(type: .leftMouseUp, flags: [], point: CGPoint(x: 150, y: 200))
+        _ = click.receive(type: .leftMouseDown, flags: .maskCommand, point: point)
+        _ = click.receive(type: .leftMouseUp, flags: .maskCommand, point: CGPoint(x: 150, y: 200))
         check(queued.isEmpty, "drag does not paste")
         var failures = 0
         click.onFailure = { failures += 1 }
         focused = 99
-        _ = click.receive(type: .leftMouseDown, flags: [], point: point)
-        _ = click.receive(type: .leftMouseUp, flags: [], point: point)
+        _ = click.receive(type: .leftMouseDown, flags: .maskCommand, point: point)
+        _ = click.receive(type: .leftMouseUp, flags: .maskCommand, point: point)
         while !queued.isEmpty { queued.removeFirst()() }
         check(failures == 0 && events.filter { $0 == "paste" }.count == 1, "unresolved focus drops quietly without pasting into a different app")
         click.start(observeSystemEvents: false)
-        _ = click.receive(type: .leftMouseDown, flags: [], point: point)
-        _ = click.receive(type: .leftMouseUp, flags: [], point: point)
+        _ = click.receive(type: .leftMouseDown, flags: .maskCommand, point: point)
+        _ = click.receive(type: .leftMouseUp, flags: .maskCommand, point: point)
         _ = click.receive(type: .leftMouseDown, flags: [], point: point)
         while !queued.isEmpty { queued.removeFirst()() }
         check(events.filter { $0 == "paste" }.count == 1, "another click cancels pending paste")

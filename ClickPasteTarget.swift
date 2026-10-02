@@ -21,6 +21,43 @@ enum ClickPasteTarget {
              "AXCheckBox", "AXRadioButton", "AXSlider", "AXToolbar", "AXDockItem", "AXTabGroup",
              "AXTab", "AXLink", "AXScrollBar", "AXIncrementor", "AXSplitter"].contains(role)
         }
+        /// Command-click has its own meaning here: open a link in a new tab,
+        /// extend a list/table selection, reveal a Dock item, move a menu-bar item.
+        var commandMeaningful: Bool {
+            ["AXLink", "AXRow", "AXCell", "AXOutline", "AXList", "AXTable", "AXDockItem",
+             "AXMenuBarItem", "AXMenuExtra"].contains(role)
+        }
+    }
+
+    /// Pure mouse-down policy, hit element first. Editable content wins. A
+    /// Command-meaningful or chrome role reached before it keeps Command: no
+    /// paste can happen there, so the app's own Command-click must survive.
+    /// A window keeps it outside its interior (title/tab bar, borders). A walk
+    /// cut short by the time limit keeps it too: a missed paste can be retried,
+    /// an unwanted navigation cannot. A path that simply ends pastes.
+    static func keepsCommand(_ hitPath: [Node], at point: CGPoint, timedOut: Bool = false) -> Bool {
+        for node in hitPath {
+            if node.writable { return false }
+            if node.commandMeaningful || node.chrome { return true }
+            if node.boundary {
+                guard node.role == "AXWindow", let frame = node.bounds,
+                      let interior = windowInterior(of: frame) else { return false }
+                return !interior.contains(point)
+            }
+        }
+        return timedOut
+    }
+
+    /// Both hit-path walks (mouse-down and after the click) go this deep, so
+    /// their answers about the same point agree.
+    static let hitPathDepth = 12
+
+    /// No public remote NSWindow.contentLayoutRect exists. This is deliberately
+    /// an interior heuristic, not an AX editability claim: keep away from
+    /// standard title/tab bars and resize borders.
+    static func windowInterior(of frame: CGRect) -> CGRect? {
+        guard frame.width > 16, frame.height > 72 else { return nil }
+        return CGRect(x: frame.minX + 8, y: frame.minY + 64, width: frame.width - 16, height: frame.height - 72)
     }
 
     enum Assessment: Equatable {
@@ -92,12 +129,70 @@ enum ClickPasteTarget {
     }
 
     /// The OS click is already delivered before this asynchronous inspection.
-    /// AX IPC cannot block the event tap or ClipEdge's UI/animation thread.
+    /// This AX IPC cannot block the event tap or ClipEdge's UI/animation thread.
     static func inspect(at point: CGPoint, pid: pid_t, completion: @escaping (Assessment) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
             let result = snapshot(at: point, pid: pid).assessment
             DispatchQueue.main.async { completion(result) }
         }
+    }
+
+    /// The one synchronous AX read, made at mouse-down inside the event tap
+    /// because the answer decides how that click is delivered. Roles,
+    /// settability and window bounds only. All requests share a budget of
+    /// about 50 ms: each is made only while budget remains, its timeout capped
+    /// to what is left (macOS may overrun a timeout by a few ms).
+    static func commandClickHasNativeMeaning(at point: CGPoint, pid: pid_t) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.05
+        func timeout() -> Float? {
+            let left = Float(deadline - ProcessInfo.processInfo.systemUptime)
+            return left > 0.002 ? min(0.02, left) : nil
+        }
+        guard AXIsProcessTrusted(), let first = timeout() else { return false }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, first)
+        var hit: AXUIElement?
+        switch AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) {
+        case .success: break
+        case .cannotComplete: return true // Busy or hung: leave the click alone.
+        default: return false             // Nothing exposed here: paste as usual.
+        }
+        guard let hit, owner(of: hit) == pid else { return false }
+        var path: [Node] = []
+        var current = hit
+        for _ in 0..<hitPathDepth {
+            let element = current
+            // A request the app could not answer in time is "can't tell", never "no".
+            var answered = true
+            func read(_ name: String) -> CFTypeRef? {
+                guard answered, let limit = timeout() else { answered = false; return nil }
+                AXUIElementSetMessagingTimeout(element, limit)
+                var value: CFTypeRef?
+                let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+                if error == .cannotComplete { answered = false }
+                return error == .success ? value : nil
+            }
+            func canSet(_ name: String) -> Bool {
+                guard answered, let limit = timeout() else { answered = false; return false }
+                AXUIElementSetMessagingTimeout(element, limit)
+                var result = DarwinBoolean(false)
+                let error = AXUIElementIsAttributeSettable(element, name as CFString, &result)
+                if error == .cannotComplete { answered = false }
+                return error == .success && result.boolValue
+            }
+            var node = Node(role: read(kAXRoleAttribute) as? String ?? "",
+                            valueWritable: canSet(kAXValueAttribute),
+                            selectedTextWritable: canSet(kAXSelectedTextAttribute))
+            if node.role == "AXWindow" { node.bounds = frame(read(kAXPositionAttribute), read(kAXSizeAttribute)) }
+            guard answered else { return keepsCommand(path, at: point, timedOut: true) }
+            path.append(node)
+            if node.writable || node.commandMeaningful || node.chrome || node.boundary { break }
+            let parent = read(kAXParentAttribute)
+            guard answered else { return keepsCommand(path, at: point, timedOut: true) }
+            guard let parent, CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+            current = parent as! AXUIElement
+        }
+        return keepsCommand(path, at: point)
     }
 
     /// Public to the fixture diagnostic, which records metadata only.
@@ -119,16 +214,12 @@ enum ClickPasteTarget {
         let frontWindow = element(app, kAXFocusedWindowAttribute)
         result.sameWindow = hitWindow != nil && focusWindow != nil && frontWindow != nil &&
             CFEqual(hitWindow, focusWindow) && CFEqual(focusWindow, frontWindow)
-        if let frontWindow, let frame = bounds(of: frontWindow), frame.width > 16, frame.height > 72 {
-            // No public remote NSWindow.contentLayoutRect exists. This is
-            // deliberately an interior heuristic, not an AX editability claim:
-            // keep away from standard title/tab bars and resize borders.
-            result.windowInterior = CGRect(x: frame.minX + 8, y: frame.minY + 64,
-                                           width: frame.width - 16, height: frame.height - 72)
+        if let frontWindow, let frame = bounds(of: frontWindow) {
+            result.windowInterior = windowInterior(of: frame)
         }
         var current: AXUIElement? = hit
         let deadline = ProcessInfo.processInfo.systemUptime + 0.32
-        for _ in 0..<12 {
+        for _ in 0..<hitPathDepth {
             guard let node = current, ProcessInfo.processInfo.systemUptime < deadline else { break }
             let description = describe(node)
             result.hitPath.append(description)
@@ -202,8 +293,11 @@ enum ClickPasteTarget {
         return AXUIElementIsAttributeSettable(element, name as CFString, &result) == .success && result.boolValue
     }
     private static func bounds(of element: AXUIElement) -> CGRect? {
-        guard let positionValue = attribute(element, kAXPositionAttribute), CFGetTypeID(positionValue) == AXValueGetTypeID(),
-              let sizeValue = attribute(element, kAXSizeAttribute), CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
+        frame(attribute(element, kAXPositionAttribute), attribute(element, kAXSizeAttribute))
+    }
+    private static func frame(_ positionValue: CFTypeRef?, _ sizeValue: CFTypeRef?) -> CGRect? {
+        guard let positionValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+              let sizeValue, CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
         var point = CGPoint.zero; var size = CGSize.zero
         guard AXValueGetValue(positionValue as! AXValue, .cgPoint, &point),
               AXValueGetValue(sizeValue as! AXValue, .cgSize, &size), size.width > 0, size.height > 0 else { return nil }

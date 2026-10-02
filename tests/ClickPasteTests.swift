@@ -6,6 +6,8 @@ import ApplicationServices
     private static var assertions = 0
     private static var failures: [String] = []
     private static let point = CGPoint(x: 100, y: 200)
+    /// A physical left-Command click: device bit and non-coalesced bit included.
+    private static let realCommand = CGEventFlags(rawValue: 0x100108)
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         assertions += 1
         if !condition() { failures.append(message); print("FAIL: \(message)") }
@@ -25,10 +27,17 @@ import ApplicationServices
         var points: [NSPoint] = []
         var commits = 0
         var drops = 0
+        var lookups = 0
+        var native = false
+        var nativeChecks = 0
         lazy var click: CommandClickPaste = {
             let click = CommandClickPaste(environment: .init(
-                targetAt: { [weak self] _ in self?.target },
-                windowAt: { [weak self] _ in self?.window },
+                receiverAt: { [weak self] _ in
+                    guard let self else { return nil }
+                    self.lookups += 1
+                    guard let target = self.target, let window = self.window else { return nil }
+                    return (target, window)
+                },
                 inspectTarget: { [weak self] _, _, completion in
                     guard let self else { return }
                     if self.deferInspection { self.inspections.append(completion) }
@@ -37,23 +46,37 @@ import ApplicationServices
                 frontmost: { [weak self] in self?.focused },
                 postPaste: { [weak self] pid in self?.events.append("paste:\(pid)"); return self?.postSucceeds ?? false },
                 schedule: { [weak self] delay, action in self?.queued.append((delay, action)) },
-                now: { [weak self] in self?.clock ?? 0 }))
+                now: { [weak self] in self?.clock ?? 0 },
+                keepsCommand: { [weak self] _, _ in self?.nativeChecks += 1; return self?.native ?? false }))
             click.onPaste = { [weak self] point in self?.commits += 1; self?.events.append("detach"); self?.points.append(point) }
             click.onDrop = { [weak self] in self?.drops += 1; self?.events.append("detach") }
             click.onFailure = { [weak self] in self?.events.append("failure") }
             return click
         }()
         init() { click.start(observeSystemEvents: false) }
-        func down(flags: CGEventFlags = []) -> Bool { click.receive(type: .leftMouseDown, flags: flags, point: point) }
-        func up(flags: CGEventFlags = [], at location: CGPoint = point) -> Bool {
+        /// Defaults model the paste gesture: Command held through the click.
+        func down(flags: CGEventFlags = .maskCommand) -> Bool { click.receive(type: .leftMouseDown, flags: flags, point: point) }
+        func up(flags: CGEventFlags = .maskCommand, at location: CGPoint = point) -> Bool {
             click.receive(type: .leftMouseUp, flags: flags, point: location)
+        }
+        func drag(flags: CGEventFlags = .maskCommand) -> Bool {
+            click.receive(type: .leftMouseDragged, flags: flags, point: CGPoint(x: 110, y: 205))
+        }
+        /// The tap callback's path with a real, never-posted event.
+        func deliver(_ type: CGEventType, flags: CGEventFlags, at location: CGPoint = point) -> CGEventFlags {
+            let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: location, mouseButton: .left)!
+            event.flags = flags
+            return click.handle(type, event).flags
         }
         func tick() { if !queued.isEmpty { queued.removeFirst().1() } }
         func drain() { for _ in 0..<40 { if queued.isEmpty { return }; tick() } }
     }
 
     static func main() {
-        ordinaryClick()
+        commandClick()
+        untouchedClicks()
+        eventRewriting()
+        nativeCommandTargets()
         modifiersAndDrags()
         staleWork()
         chromeAndUnknownTargets()
@@ -65,11 +88,11 @@ import ApplicationServices
         if !failures.isEmpty { exit(EXIT_FAILURE) }
     }
 
-    private static func ordinaryClick() {
+    private static func commandClick() {
         let h = Harness()
-        check(h.down(), "ordinary down is accepted")
+        check(h.down(), "Command mouse-down is accepted and loses Command")
         check(h.events.isEmpty && h.queued.isEmpty, "mouse-down neither inspects, activates nor pastes")
-        check(h.up(), "ordinary up is accepted")
+        check(h.up(), "Command mouse-up is accepted and loses Command")
         check(h.queued.count == 1 && h.queued[0].0 > 0, "delivery starts after mouse-up has returned")
         h.tick()
         check(h.events.isEmpty, "native click owns activation; CE never forces it")
@@ -79,28 +102,153 @@ import ApplicationServices
         h.tick()
         check(h.events == ["paste:12345", "detach"], "settled focus delivers exactly one paste then detaches")
         check(!h.click.active && h.points.count == 1, "successful click ends the held gesture")
-        _ = h.up(); h.drain()
+        check(!h.up(), "duplicate mouse-up is neither accepted nor changed")
+        h.drain()
         check(h.points.count == 1, "duplicate mouse-up cannot paste twice")
+        let released = Harness()
+        released.focused = 12_345
+        _ = released.down()
+        check(released.up(flags: []), "Command released just before the button still pastes")
+        released.drain()
+        check(released.events == ["paste:12345", "detach"], "early Command release delivers one paste")
+    }
+
+    /// Al, 2026-10-02: unmodified clicks leave the cursor magnet untouched.
+    private static func untouchedClicks() {
+        let plain = Harness()
+        plain.focused = 12_345
+        check(!plain.down(flags: []) && !plain.up(flags: []), "plain click passes unchanged")
+        plain.drain()
+        check(plain.click.active && plain.events.isEmpty && plain.queued.isEmpty, "plain click keeps the magnet and never pastes")
+        check(plain.drops == 0 && plain.commits == 0, "plain click neither drops nor commits")
+        check(plain.lookups == 0, "plain click skips window lookups inside the event tap")
+        for _ in 0..<3 { _ = plain.down(flags: []); _ = plain.up(flags: []) }
+        plain.drain()
+        check(plain.click.active && plain.events.isEmpty, "repeated plain clicks keep the magnet")
+        let unknown = Harness()
+        unknown.target = nil; unknown.window = nil
+        _ = unknown.down(flags: []); _ = unknown.up(flags: []); unknown.drain()
+        check(unknown.click.active && unknown.events.isEmpty && unknown.lookups == 0, "plain click outside any window keeps the magnet")
+        let chrome = Harness()
+        chrome.assessment = .reject("control-click")
+        _ = chrome.down(flags: []); _ = chrome.up(flags: []); chrome.drain()
+        check(chrome.click.active && chrome.events.isEmpty && chrome.lookups == 0, "plain click on app chrome keeps the magnet")
+        let thenCommand = Harness()
+        thenCommand.focused = 12_345
+        _ = thenCommand.down(flags: []); _ = thenCommand.up(flags: [])
+        _ = thenCommand.down(); _ = thenCommand.up(); thenCommand.drain()
+        check(thenCommand.events == ["paste:12345", "detach"], "plain click, then Command-click, pastes once")
+    }
+
+    /// Command is removed from the real event of an accepted press, and only there.
+    private static func eventRewriting() {
+        let h = Harness()
+        h.focused = 12_345
+        let down = h.deliver(.leftMouseDown, flags: realCommand)
+        check(!down.contains(.maskCommand), "accepted mouse-down reaches the destination without Command")
+        check(down.contains(CGEventFlags(rawValue: 0x100)), "only Command is removed from the mouse-down")
+        let drag = Harness()
+        _ = drag.deliver(.leftMouseDown, flags: realCommand)
+        check(drag.deliver(.leftMouseDragged, flags: realCommand).contains(.maskCommand), "drags are observed, never rewritten")
+        check(!drag.deliver(.leftMouseUp, flags: realCommand).contains(.maskCommand), "a dragged press's mouse-up still loses Command")
+        check(!h.deliver(.leftMouseUp, flags: realCommand).contains(.maskCommand), "accepted mouse-up reaches the destination without Command")
+        h.drain()
+        check(h.events == ["paste:12345", "detach"], "rewritten real events still paste once")
+        for flags in [CGEventFlags(), .maskShift, realCommand.union(.maskShift), realCommand.union(.maskAlternate)] {
+            let other = Harness()
+            check(other.deliver(.leftMouseDown, flags: flags) == flags && other.deliver(.leftMouseUp, flags: flags) == flags,
+                  "other clicks reach the destination unchanged: \(flags.rawValue)")
+        }
+        for flags in [realCommand, realCommand.union(.maskAlphaShift), realCommand.union(.maskSecondaryFn)] {
+            let real = Harness()
+            real.focused = 12_345
+            check(real.down(flags: flags) && real.up(flags: flags), "physical Command flags are accepted: \(flags.rawValue)")
+            real.drain()
+            check(real.events == ["paste:12345", "detach"], "physical Command flags paste once: \(flags.rawValue)")
+        }
+        let observeOnly = Harness()
+        observeOnly.click.canRewrite = false
+        check(observeOnly.deliver(.leftMouseDown, flags: realCommand) == realCommand, "without an active tap Command is never removed")
+        _ = observeOnly.deliver(.leftMouseUp, flags: realCommand); observeOnly.drain()
+        check(observeOnly.click.active && observeOnly.events.isEmpty && observeOnly.lookups == 0,
+              "without an active tap a Command-click neither pastes nor drops the magnet")
+        let lost = Harness()
+        _ = lost.down()
+        check(!lost.down(flags: [.maskCommand, .maskShift]) && !lost.up(flags: [.maskCommand, .maskShift]),
+              "a lost mouse-up does not leak Command removal into the next press")
+        let restarted = Harness()
+        _ = restarted.down(); restarted.click.start(observeSystemEvents: false)
+        check(!restarted.up(flags: [.maskCommand, .maskShift]), "a new magnet forgets the old press")
+    }
+
+    /// A Command-click on a link or list row keeps its own meaning.
+    private static func nativeCommandTargets() {
+        let link = Harness()
+        link.native = true; link.focused = 12_345
+        check(!link.down() && !link.up(), "Command-click on a link passes unchanged")
+        link.drain()
+        check(link.click.active && link.events.isEmpty && link.drops == 0, "Command-click on a link keeps the magnet and never pastes")
+        check(link.nativeChecks == 1, "one mouse-down check per Command-click")
+        let plain = Harness()
+        plain.native = true
+        _ = plain.down(flags: []); _ = plain.up(flags: [])
+        check(plain.nativeChecks == 0, "plain clicks never trigger the accessibility check")
+        windowLookup()
+        typealias Node = ClickPasteTarget.Node
+        func keeps(_ path: [Node], at location: CGPoint = point, timedOut: Bool = false) -> Bool {
+            ClickPasteTarget.keepsCommand(path, at: location, timedOut: timedOut)
+        }
+        check(keeps([Node(role: "AXStaticText"), Node(role: "AXLink"), Node(role: "AXWebArea")]), "link text keeps Command")
+        check(keeps([Node(role: "AXStaticText"), Node(role: "AXLink"), Node(role: "AXTextArea", valueWritable: true)]),
+              "a link inside an editor keeps Command")
+        check(!keeps([Node(role: "AXTextArea", valueWritable: true), Node(role: "AXCell")]),
+              "an editable field inside a table cell is a paste target")
+        check(keeps([Node(role: "AXTextField"), Node(role: "AXCell"), Node(role: "AXRow")]),
+              "a read-only name in a list row keeps Command for multi-select")
+        check(keeps([Node(role: "AXButton"), Node(role: "AXToolbar"), Node(role: "AXWindow")]),
+              "a toolbar button keeps Command (Back opens a new tab)")
+        check(!keeps([Node(role: "AXTextField", valueWritable: true), Node(role: "AXToolbar")]),
+              "an address field inside a toolbar still pastes")
+        let window = Node(role: "AXWindow", bounds: CGRect(x: 0, y: 0, width: 800, height: 600))
+        check(!keeps([window]), "window-only editors paste in their interior")
+        check(keeps([window], at: CGPoint(x: 100, y: 25)), "a title or tab bar keeps Command (move without activating)")
+        check(keeps([window], at: CGPoint(x: 2, y: 300)), "a window border keeps Command")
+        check(!keeps([Node(role: "AXWindow")]), "a window without bounds still pastes")
+        check(!keeps([Node(role: "AXGroup"), Node(role: "AXWindow"), Node(role: "AXRow")]), "the walk stops at the window")
+        check(!keeps([]), "a hit-test that exposes nothing still pastes")
+        check(keeps([Node(role: "AXStaticText")], timedOut: true), "a walk cut short by the time limit leaves the click alone")
+        check(!keeps([Node(role: "AXTextArea", valueWritable: true)], timedOut: true), "an editor found before the limit still pastes")
+        check(keeps([Node(role: "AXDockItem")]) && keeps([Node(role: "AXMenuBarItem")]), "Dock and menu-bar items keep Command")
     }
 
     private static func modifiersAndDrags() {
-        for modifier in [CGEventFlags.maskShift, .maskCommand, .maskControl, .maskAlternate] {
+        let others: [CGEventFlags] = [.maskShift, .maskControl, .maskAlternate,
+                                      [.maskCommand, .maskShift], [.maskCommand, .maskControl], [.maskCommand, .maskAlternate]]
+        for modifier in others {
             let h = Harness()
-            check(!h.down(flags: modifier) && !h.up(flags: modifier), "modified click is not an automatic paste: \(modifier.rawValue)")
-            check(h.click.active && h.events.isEmpty && h.queued.isEmpty, "modified click retains magnet: \(modifier.rawValue)")
+            h.focused = 12_345
+            check(!h.down(flags: modifier) && !h.up(flags: modifier), "other modified click passes unchanged: \(modifier.rawValue)")
+            h.drain()
+            check(h.click.active && h.events.isEmpty && h.queued.isEmpty, "other modified click retains magnet: \(modifier.rawValue)")
+        }
+        for modifier in [CGEventFlags.maskShift, .maskControl, .maskAlternate] {
             let late = Harness()
-            _ = late.down(); _ = late.up(flags: modifier); late.drain()
+            late.focused = 12_345
+            _ = late.down()
+            check(late.up(flags: modifier.union(.maskCommand)), "late modifier's mouse-up still loses Command: \(modifier.rawValue)")
+            late.drain()
             check(late.click.active && late.events.isEmpty, "modifier added before mouse-up suppresses paste: \(modifier.rawValue)")
         }
-        let shifted = Harness()
-        _ = shifted.down(); _ = shifted.up(flags: .maskShift)
-        shifted.drain()
-        check(shifted.click.active && shifted.events.isEmpty, "Shift added before release suppresses paste and detach")
         let drag = Harness()
+        drag.focused = 12_345
         _ = drag.down()
-        _ = drag.click.receive(type: .leftMouseDragged, flags: [], point: CGPoint(x: 110, y: 205))
-        _ = drag.up(); drag.drain()
+        check(!drag.drag(), "Command-drag events pass unchanged")
+        check(drag.up(), "Command-drag mouse-up loses Command like its mouse-down")
+        drag.drain()
         check(drag.click.active && drag.events.isEmpty, "drag cancels automatic paste and retains magnet")
+        let plainDrag = Harness()
+        _ = plainDrag.down(flags: [])
+        check(!plainDrag.drag(flags: []) && !plainDrag.up(flags: []), "plain drag passes unchanged")
         let distant = Harness()
         _ = distant.down(); _ = distant.up(at: CGPoint(x: 120, y: 200)); distant.drain()
         check(distant.click.active && distant.events.isEmpty, "distant release cancels even if dragged event was missed")
@@ -112,6 +260,11 @@ import ApplicationServices
         _ = later.down(flags: .maskShift)
         later.focused = 12_345; later.drain()
         check(later.events.isEmpty && later.click.active, "later Shift click cancels queued inspection and paste")
+        let laterPlain = Harness()
+        _ = laterPlain.down(); _ = laterPlain.up()
+        _ = laterPlain.down(flags: []); _ = laterPlain.up(flags: [])
+        laterPlain.focused = 12_345; laterPlain.drain()
+        check(laterPlain.events.isEmpty && laterPlain.click.active, "later plain click cancels queued paste and keeps magnet")
         let stopped = Harness()
         _ = stopped.down(); _ = stopped.up(); stopped.click.stop(); stopped.drain()
         check(stopped.events.isEmpty && !stopped.click.active, "Esc/drop cancels queued work")
@@ -128,6 +281,39 @@ import ApplicationServices
         check(laterTarget.events == ["paste:54321", "detach"], "only the latest click's app receives paste")
     }
 
+    /// The window a click lands in, from a synthetic window list (front first).
+    private static func windowLookup() {
+        func window(_ owner: String, pid: Int32, number: Int, layer: Int, _ frame: CGRect, alpha: Double = 1) -> [String: Any] {
+            [kCGWindowOwnerName as String: owner, kCGWindowOwnerPID as String: pid, kCGWindowNumber as String: number,
+             kCGWindowLayer as String: layer, kCGWindowAlpha as String: alpha,
+             kCGWindowBounds as String: CGRect(origin: frame.origin, size: frame.size).dictionaryRepresentation]
+        }
+        let own = ProcessInfo.processInfo.processIdentifier
+        let cursor = window("Window Server", pid: 620, number: 9, layer: Int(CGWindowLevelForKey(.cursorWindow)),
+                            CGRect(x: 80, y: 180, width: 62, height: 88))
+        let editor = window("Notes", pid: 12_345, number: 42, layer: 0, CGRect(x: 0, y: 0, width: 800, height: 600))
+        func first(_ list: [[String: Any]], at location: CGPoint = point, passes: Set<Int> = []) -> Int? {
+            CommandClickPaste.firstWindow(at: location, in: list, ownPID: own) { passes.contains($0) }?.number
+        }
+        check(first([cursor, editor]) == 42, "the Window Server's cursor window around the pointer never takes the click")
+        check(first([window("Window Server", pid: 620, number: 3, layer: 24, CGRect(x: 0, y: 0, width: 1800, height: 30)), editor],
+                    at: CGPoint(x: 100, y: 10)) == nil, "the menu bar is never a paste destination")
+        let magnet = window("ClipEdge", pid: own, number: 7, layer: 101, CGRect(x: 90, y: 190, width: 145, height: 120))
+        check(first([cursor, magnet, editor], passes: [7]) == 42, "ClipEdge's click-through magnet is skipped")
+        check(first([magnet, editor]) == 7, "a ClipEdge window that takes clicks is not clicked through")
+        check(first([window("Overlay", pid: 777, number: 5, layer: 0, CGRect(x: 0, y: 0, width: 900, height: 700), alpha: 0), editor]) == 42,
+              "fully transparent windows are skipped")
+        check(first([editor], at: CGPoint(x: 900, y: 650)) == nil, "no window under the point")
+        let banner = window("Notification Center", pid: 1230, number: 26, layer: 21, CGRect(x: 0, y: 0, width: 2056, height: 1329))
+        let menuBar = window("Window Server", pid: 620, number: 3, layer: 24, CGRect(x: 0, y: 0, width: 1800, height: 30))
+        check(CommandClickPaste.frontWindow(of: 12_345, at: point, in: [cursor, banner, editor]) == 42,
+              "the receiving app's own window is found beneath pass-through overlays")
+        check(CommandClickPaste.frontWindow(of: 12_345, at: CGPoint(x: 100, y: 10), in: [menuBar]) == nil,
+              "an app has no window of its own in the menu bar")
+        check(CommandClickPaste.frontWindow(of: 12_345, at: CGPoint(x: 900, y: 650), in: [editor]) == nil,
+              "no window of that app under the point")
+    }
+
     private static func chromeAndUnknownTargets() {
         let chrome = Harness()
         chrome.assessment = .reject("control-click")
@@ -136,14 +322,17 @@ import ApplicationServices
         _ = chrome.up(); chrome.drain()
         check(chrome.events == ["detach"] && !chrome.click.active, "chrome drops the magnet without focus changes or paste")
         check(chrome.drops == 1 && chrome.commits == 0, "chrome drop never masquerades as a paste commit")
-        let unknown = Harness()
-        unknown.target = nil
-        _ = unknown.down(); _ = unknown.up(); unknown.drain()
-        check(unknown.events == ["detach"] && !unknown.click.active, "raw click without a known target still drops the magnet")
-        check(unknown.drops == 1 && unknown.commits == 0, "unknown target drops without a paste commit")
+        for (target, window) in [(nil, 42), (12_345, nil), (nil, nil)] as [(pid_t?, Int?)] {
+            let nowhere = Harness()
+            nowhere.target = target; nowhere.window = window
+            check(!nowhere.down() && !nowhere.up(), "nothing to paste into: Command stays (desktop icons keep ⌘-select)")
+            nowhere.drain()
+            check(nowhere.click.active && nowhere.events.isEmpty && nowhere.nativeChecks == 0,
+                  "nothing to paste into: the magnet stays and no accessibility check runs")
+        }
         let own = Harness()
         own.target = ProcessInfo.processInfo.processIdentifier
-        check(!own.down() && !own.up(), "ClipEdge controls do not receive automatic paste")
+        check(!own.down() && !own.up(), "Command-click on ClipEdge's own controls passes unchanged")
         check(own.click.active && own.events.isEmpty, "ClipEdge's own controls preserve the held item")
     }
 

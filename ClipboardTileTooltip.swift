@@ -5,7 +5,7 @@ final class ClipboardTileTooltip {
     static let shared = ClipboardTileTooltip()
     static let rows = [("Pick up", "Return or click"), ("Preview magnet", "Space"),
                        ("Open in Preview", "⌘O"), ("Delete", "⌫"),
-                       ("Paste held item", "click"), ("Keep holding", "⇧click"), ("Drop magnet", "Esc")]
+                       ("Paste held item", "⌘click"), ("Keep holding", "click"), ("Drop magnet", "Esc")]
     static var legendText: String { rows.map { "\($0.0) ← \($0.1)" }.joined(separator: "\n") }
     private weak var owner: ClipboardTile?
     private var pending: DispatchWorkItem?

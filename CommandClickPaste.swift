@@ -1,30 +1,42 @@
 import AppKit
 import ApplicationServices
 
-/// Observes a held item's next unmodified click without changing the real event.
-/// Content clicks paste after focus settles; chrome clicks only drop the magnet.
+/// Watches a held item's next Command-click. The destination receives that
+/// click without Command, so it places its insertion point; paste follows after
+/// focus settles. Chrome clicks only drop the magnet. Every other click, plain
+/// or otherwise modified, passes unchanged and leaves the magnet attached, as
+/// does a Command-click on a link or list row, where Command has its own meaning.
 final class CommandClickPaste {
-    enum Destination: Equatable { case paste(pid_t), drop }
-    struct Target: Equatable { let destination: Destination; let point: NSPoint; let window: Int? }
+    /// Modifiers that decide a gesture. Only Command alone means "paste here".
+    private static let gestureModifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+    struct Target: Equatable { let pid: pid_t; let point: NSPoint; let window: Int }
     struct Environment {
-        var targetAt: (CGPoint) -> pid_t? = CommandClickPaste.targetApplication
-        var windowAt: (CGPoint) -> Int? = { CommandClickPaste.targetWindow(at: $0)?.number }
+        /// The app and window that will actually receive a click at a point.
+        var receiverAt: (CGPoint) -> (pid: pid_t, window: Int)? = CommandClickPaste.receivingWindow
         var inspectTarget: (CGPoint, pid_t, @escaping (ClickPasteTarget.Assessment) -> Void) -> Void = ClickPasteTarget.inspect
         var frontmost: () -> pid_t? = { NSWorkspace.shared.frontmostApplication?.processIdentifier }
         var postPaste: (pid_t) -> Bool = CommandClickPaste.postPaste
         var schedule: (TimeInterval, @escaping () -> Void) -> Void = { delay, action in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action) }
         var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        /// Bounded AX read at mouse-down: does Command-click have its own meaning here?
+        var keepsCommand: (CGPoint, pid_t) -> Bool = ClickPasteTarget.commandClickHasNativeMeaning
     }
     var onPaste: ((NSPoint) -> Void)?
     var onDrop: (() -> Void)?
     var onFailure: (() -> Void)?
     private let environment: Environment
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    private var taps: [(port: CFMachPort, source: CFRunLoopSource)] = []
     private var mouseMonitor: Any?
     private var generation = 0
     private enum Gesture { case idle, pressed(Target), focusing }
     private var gesture: Gesture = .idle
+    /// Command is removed from the mouse-down and mouse-up of an accepted
+    /// press, so the destination receives one ordinary click.
+    private var removingCommand = false
+    /// Only an active tap can remove Command. Fixtures model one; a real start
+    /// earns it. Without it, Command-clicks pass unchanged and do not paste:
+    /// the destination has already acted on its own Command-click.
+    var canRewrite = true
     private(set) var active = false
     private(set) var lastDecision = "idle"
     init(environment: Environment = Environment()) { self.environment = environment }
@@ -32,24 +44,19 @@ final class CommandClickPaste {
 
     func start(observeSystemEvents: Bool = true) {
         stop(); active = true; lastDecision = "armed"
+        canRewrite = !observeSystemEvents
         guard observeSystemEvents else { return }
-        let mask = [CGEventType.leftMouseDown, .leftMouseUp, .leftMouseDragged].reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
-        tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly, eventsOfInterest: mask, callback: { _, type, event, context in
-            guard let context else { return Unmanaged.passUnretained(event) }
-            let owner = Unmanaged<CommandClickPaste>.fromOpaque(context).takeUnretainedValue()
-            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                if owner.active, let tap = owner.tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            } else { owner.receive(type: type, flags: event.flags, point: event.location) }
-            return Unmanaged.passUnretained(event)
-        }, userInfo: Unmanaged.passUnretained(self).toOpaque())
-        if let tap {
-            source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-            CGEvent.tapEnable(tap: tap, enable: true)
-        }
-        // Mouse observation does not require a keyboard/Input Monitoring grant.
-        // Use AppKit only when Quartz could not create the tap (no duplicate downs).
-        if tap == nil {
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        if let clicks = Self.tap(.defaultTap, [.leftMouseDown, .leftMouseUp], context) {
+            // Rewriting needs an active tap (Accessibility, which paste also needs).
+            // Drags are only observed, so dragging anywhere never waits on CE.
+            taps = [clicks] + [Self.tap(.listenOnly, [.leftMouseDragged], context)].compactMap { $0 }
+            canRewrite = true
+        } else if let observer = Self.tap(.listenOnly, [.leftMouseDown, .leftMouseUp, .leftMouseDragged], context) {
+            taps = [observer]
+        } else {
+            // Mouse observation does not require a keyboard/Input Monitoring grant.
+            // Use AppKit only when Quartz could not create a tap (no duplicate downs).
             mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self] event in
                 guard let cg = event.cgEvent else { return }
                 self?.receive(type: cg.type, flags: cg.flags, point: cg.location)
@@ -57,41 +64,87 @@ final class CommandClickPaste {
         }
     }
     func stop() {
-        active = false; generation += 1; gesture = .idle
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        if let tap { CFMachPortInvalidate(tap) }
-        source = nil; tap = nil
+        active = false; generation += 1; gesture = .idle; removingCommand = false
+        for tap in taps {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), tap.source, .commonModes)
+            CFMachPortInvalidate(tap.port)
+        }
+        taps = []
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
     }
-    /// Returns whether this gesture was accepted; all physical events pass unchanged.
+    /// The tap callback's body. A listen-only tap ignores the rewrite.
+    @discardableResult
+    func handle(_ type: CGEventType, _ event: CGEvent) -> CGEvent {
+        if receive(type: type, flags: event.flags, point: event.location) {
+            // Command-click would open links, jump to definitions or add
+            // cursors; the destination should only place its caret.
+            event.flags.remove(.maskCommand)
+        }
+        return event
+    }
+    /// macOS turned a tap off (a stall or user input) and passed events without
+    /// it; a press may have lost its mouse-up. Forget it and turn back on.
+    private func resumeAfterTapDisabled() {
+        removingCommand = false
+        if case .pressed = gesture { gesture = .idle }
+        if active { taps.forEach { CGEvent.tapEnable(tap: $0.port, enable: true) } }
+    }
+    private static let callback: CGEventTapCallBack = { _, type, event, context in
+        guard let context else { return Unmanaged.passUnretained(event) }
+        let owner = Unmanaged<CommandClickPaste>.fromOpaque(context).takeUnretainedValue()
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput { owner.resumeAfterTapDisabled() }
+        else { owner.handle(type, event) }
+        return Unmanaged.passUnretained(event)
+    }
+    private static func tap(_ options: CGEventTapOptions, _ types: [CGEventType],
+                            _ context: UnsafeMutableRawPointer) -> (port: CFMachPort, source: CFRunLoopSource)? {
+        let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
+        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: options,
+                                           eventsOfInterest: mask, callback: callback, userInfo: context) else { return nil }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0) else { CFMachPortInvalidate(port); return nil }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: port, enable: true)
+        return (port, source)
+    }
+    /// Returns whether to remove Command from this event. Only an accepted
+    /// Command-click's own events are changed; all other events pass unchanged.
     @discardableResult
     func receive(type: CGEventType, flags: CGEventFlags, point: CGPoint) -> Bool {
         guard active else { return false }
         if type == .leftMouseDown {
             generation += 1 // A later click cancels a still-pending focus/paste.
-            gesture = .idle
-            guard flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { return false }
-            let pid = environment.targetAt(point)
-            guard pid != ProcessInfo.processInfo.processIdentifier else { return false }
-            let window = environment.windowAt(point)
+            gesture = .idle; removingCommand = false
+            // A plain or otherwise-modified click is the user's own: the magnet stays.
+            guard flags.intersection(Self.gestureModifiers) == .maskCommand else { return false }
+            guard canRewrite else { lastDecision = "command-not-removable"; return false }
+            // Nothing to paste into here (the desktop, the menu bar, ClipEdge
+            // itself): the click keeps Command and the magnet stays.
+            guard let (pid, window) = environment.receiverAt(point), pid != ProcessInfo.processInfo.processIdentifier
+            else { lastDecision = "no-paste-target"; return false }
             // Do not ask AX whether mouse-down hit an editor. Web/custom editors
             // may create their input only after this very click is delivered.
-            let destination: Destination = window == nil ? .drop : pid.map(Destination.paste) ?? .drop
-            gesture = .pressed(Target(destination: destination, point: NSPoint(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).height - point.y), window: window))
+            // Only ask whether Command already means something here: a link
+            // opens a tab, a list row extends a selection. Those stay native.
+            if environment.keepsCommand(point, pid) { lastDecision = "native-command-target"; return false }
+            gesture = .pressed(Target(pid: pid, point: NSPoint(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).height - point.y), window: window))
+            removingCommand = true
             return true
         }
         if type == .leftMouseDragged { gesture = .idle; generation += 1; return false }
-        guard type == .leftMouseUp, case .pressed(let target) = gesture else { return false }
+        guard type == .leftMouseUp else { return false }
+        let accepted = removingCommand
+        removingCommand = false
+        guard case .pressed(let target) = gesture else { return accepted }
         gesture = .idle
-        guard flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).isEmpty else { return false }
+        // Command may be released just before the button; other modifiers cancel.
+        guard flags.intersection([.maskControl, .maskAlternate, .maskShift]).isEmpty else { return true }
         let release = NSPoint(x: point.x, y: CGDisplayBounds(CGMainDisplayID()).height - point.y)
         guard hypot(release.x - target.point.x, release.y - target.point.y) < 5 else { return true }
-        guard case .paste = target.destination else { stop(); onDrop?(); return true }
+        let current = generation
         gesture = .focusing
         // Let the real click choose the app AND its input. Forcing activation
         // here could bring a stale destination back after the user switched.
-        let current = generation
         let deadline = environment.now() + 0.85
         environment.schedule(0.06) { [weak self] in
             guard let self, self.active, self.generation == current else { return }
@@ -100,17 +153,16 @@ final class CommandClickPaste {
         return true
     }
     private func deliver(_ target: Target, generation current: Int, attempts: Int, deadline: TimeInterval) {
-        guard case .paste(let pid) = target.destination else { return }
+        let pid = target.pid
         let point = CGPoint(x: target.point.x, y: CGDisplayBounds(CGMainDisplayID()).height - target.point.y)
-        guard environment.now() < deadline, environment.targetAt(point) == pid, environment.windowAt(point) == target.window else {
+        guard environment.now() < deadline, stillUnder(point, target) else {
             lastDecision = "cancelled-target-or-timeout"
             stop(); onDrop?(); return
         }
         environment.inspectTarget(point, pid) { [weak self] assessment in
             guard let self, self.active, self.generation == current else { return }
             self.lastDecision = String(describing: assessment)
-            guard self.environment.now() < deadline, self.environment.targetAt(point) == pid,
-                  self.environment.windowAt(point) == target.window else {
+            guard self.environment.now() < deadline, self.stillUnder(point, target) else {
                 self.lastDecision = "cancelled-target-or-timeout"
                 self.stop(); self.onDrop?(); return
             }
@@ -127,20 +179,61 @@ final class CommandClickPaste {
             } else { self.stop(); self.onDrop?() }
         }
     }
-    private static func targetApplication(at point: CGPoint) -> pid_t? {
-        targetWindow(at: point)?.pid
+    private func stillUnder(_ point: CGPoint, _ target: Target) -> Bool {
+        guard let receiver = environment.receiverAt(point) else { return false }
+        return receiver.pid == target.pid && receiver.window == target.window
     }
-    private static func targetWindow(at point: CGPoint) -> (pid: pid_t, number: Int)? {
+    /// The Window Server, not the top of the window list, decides who receives
+    /// a click: the pointer's own window (an enlarged pointer) and Notification
+    /// Center's full-screen host (while a banner shows) pass clicks through.
+    /// The system-wide hit test names the receiving app; its frontmost window
+    /// at the point is the window number. ClipEdge's own clickable windows
+    /// answer first, without asking Accessibility about ClipEdge itself.
+    static func receivingWindow(at point: CGPoint) -> (pid: pid_t, window: Int)? {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let own = ProcessInfo.processInfo.processIdentifier
+        let front = firstWindow(at: point, in: windows, ownPID: own) { number in
+            NSApp.windows.contains { $0.windowNumber == number && $0.ignoresMouseEvents }
+        }
+        if let front, front.pid == own { return (front.pid, front.number) }
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.02)
+        var hit: AXUIElement?
+        var pid: pid_t = 0
+        guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
+              let hit, AXUIElementGetPid(hit, &pid) == .success, pid != own,
+              let number = frontWindow(of: pid, at: point, in: windows) else { return nil }
+        return (pid, number)
+    }
+    /// The frontmost on-screen window of `pid` that contains `point`. None for
+    /// the menu bar (the Window Server's) or the desktop (excluded from the list).
+    static func frontWindow(of pid: pid_t, at point: CGPoint, in windows: [[String: Any]]) -> Int? {
+        for window in windows where window[kCGWindowOwnerPID as String] as? Int32 == pid {
+            guard let raw = window[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary), bounds.contains(point),
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  (window[kCGWindowLayer as String] as? Int ?? 0) < cursorLevel else { continue }
+            return window[kCGWindowNumber as String] as? Int
+        }
+        return nil
+    }
+    private static let cursorLevel = Int(CGWindowLevelForKey(.cursorWindow))
+    /// The front window at `point` by the window list alone, used to recognize
+    /// ClipEdge's own clickable windows. Skips the Window Server's cursor
+    /// window, which macOS lists around an enlarged pointer, and ClipEdge's
+    /// click-through panels. The Window Server's own UI (the menu bar) is nil.
+    static func firstWindow(at point: CGPoint, in windows: [[String: Any]], ownPID: pid_t,
+                            passesClicks: (Int) -> Bool) -> (pid: pid_t, number: Int)? {
         for window in windows {
             guard let raw = window[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary), bounds.contains(point),
                   let pid = window[kCGWindowOwnerPID as String] as? Int32,
-                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
-            if pid == ProcessInfo.processInfo.processIdentifier,
-               let number = window[kCGWindowNumber as String] as? Int,
-               NSApp.windows.contains(where: { $0.windowNumber == number && $0.ignoresMouseEvents }) { continue }
-            guard let number = window[kCGWindowNumber as String] as? Int else { return nil }
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  (window[kCGWindowLayer as String] as? Int ?? 0) < cursorLevel else { continue }
+            let number = window[kCGWindowNumber as String] as? Int
+            if pid == ownPID, let number, passesClicks(number) { continue }
+            if window[kCGWindowOwnerName as String] as? String == "Window Server" { return nil }
+            guard let number else { return nil }
             return (pid, number) // Do not click through CE or a foreground overlay into another app.
         }
         return nil
