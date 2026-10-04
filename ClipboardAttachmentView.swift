@@ -6,11 +6,39 @@ enum ClipboardAttachmentView {
         let limit = maximumAttachmentPixels / max(1, screen?.backingScaleFactor ?? 1)
         let stampHeight: CGFloat = 17
         let hintHeight: CGFloat = 16
-        let preview = makePreview(for: entry, maximumSize: NSSize(width: limit, height: limit - holdingGlyphHeight - stampHeight - hintHeight))
-        let size = NSSize(width: max(145, preview.size.width), height: preview.size.height + holdingGlyphHeight + stampHeight + hintHeight)
+        // Quiet facts, then the first path on up to two lines, along the preview's
+        // bottom edge. A long path keeps its start and its file name; the drawer
+        // and the history window show it whole.
+        let wrapping = NSMutableParagraphStyle()
+        wrapping.lineBreakMode = .byCharWrapping
+        wrapping.alignment = .center
+        let factsAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .paragraphStyle: wrapping]
+        func factsText(_ width: CGFloat) -> String {
+            let path = entry.metadata.displayPaths.first.map { middleElided($0, lines: 2, width: width - 12, attributes: factsAttributes) }
+            return [entry.metadata.line, path ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        func factsHeight(_ text: String, _ width: CGFloat) -> CGFloat {
+            guard !text.isEmpty else { return 0 }
+            return ceil((text as NSString).boundingRect(with: NSSize(width: width - 12, height: .greatestFiniteMagnitude),
+                                                        options: .usesLineFragmentOrigin, attributes: factsAttributes).height) + 4
+        }
+        // The narrowest magnet needs the most lines; a wider preview needs fewer.
+        let preview = makePreview(for: entry, maximumSize: NSSize(width: limit, height: limit - holdingGlyphHeight - stampHeight - hintHeight - factsHeight(factsText(145), 145)))
+        let width = max(145, preview.size.width)
+        let facts = factsText(width)
+        let metaHeight = factsHeight(facts, width)
+        let size = NSSize(width: width, height: preview.size.height + holdingGlyphHeight + stampHeight + hintHeight + metaHeight)
         let container = NSView(frame: NSRect(origin: .zero, size: size))
-        preview.view.frame.origin = NSPoint(x: (size.width - preview.size.width) / 2, y: stampHeight + hintHeight)
+        preview.view.frame.origin = NSPoint(x: (size.width - preview.size.width) / 2, y: stampHeight + hintHeight + metaHeight)
         container.addSubview(preview.view)
+        if metaHeight > 0 {
+            let meta = NSTextField(wrappingLabelWithString: facts)
+            meta.attributedStringValue = NSAttributedString(string: facts, attributes: factsAttributes.merging([.foregroundColor: NSColor.secondaryLabelColor]) { $1 })
+            meta.frame = NSRect(x: 0, y: stampHeight + hintHeight, width: size.width, height: metaHeight)
+            meta.drawsBackground = true
+            meta.backgroundColor = .windowBackgroundColor
+            container.addSubview(meta)
+        }
         let stamp = NSTextField(labelWithString: entry.dateTimeStamp)
         stamp.font = .systemFont(ofSize: 10, weight: .medium)
         stamp.alignment = .center
@@ -29,7 +57,7 @@ enum ClipboardAttachmentView {
         // The destination app owns its actual cursor. Keep the holding cue
         // visible with our attachment even when that app chooses an I-beam.
         let hand = NSImageView(frame: NSRect(x: (size.width - 24) / 2,
-                                           y: preview.size.height + stampHeight + hintHeight + 1, width: 24, height: 24))
+                                           y: preview.size.height + stampHeight + hintHeight + metaHeight + 1, width: 24, height: 24))
         hand.image = NSCursor.closedHand.image
         hand.imageScaling = .scaleProportionallyUpOrDown
         container.addSubview(hand)
@@ -105,6 +133,9 @@ enum ClipboardAttachmentView {
 
     private static func makeFilePreview(_ entry: ClipboardEntry, maximumSize: NSSize) -> (view: NSView, size: NSSize) {
         let size = NSSize(width: min(210, maximumSize.width), height: min(106, maximumSize.height))
+        // With facts and a path beneath, the name keeps one line and the picture shrinks.
+        let isShort = size.height < 100
+        let side: CGFloat = isShort ? max(24, size.height - 40) : 48
         let container = magnetContainer(size: size)
         let imageView = NSImageView(image: entry.thumbnail ?? NSImage())
         imageView.imageScaling = .scaleProportionallyUpOrDown
@@ -113,8 +144,8 @@ enum ClipboardAttachmentView {
         let label = NSTextField(wrappingLabelWithString: entry.title)
         label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .labelColor
-        label.lineBreakMode = .byWordWrapping
-        label.maximumNumberOfLines = 2
+        label.lineBreakMode = isShort ? .byTruncatingMiddle : .byWordWrapping
+        label.maximumNumberOfLines = isShort ? 1 : 2
         label.preferredMaxLayoutWidth = size.width - 20
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -124,8 +155,8 @@ enum ClipboardAttachmentView {
         NSLayoutConstraint.activate([
             imageView.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             imageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
-            imageView.widthAnchor.constraint(equalToConstant: 48),
-            imageView.heightAnchor.constraint(equalToConstant: 48),
+            imageView.widthAnchor.constraint(equalToConstant: side),
+            imageView.heightAnchor.constraint(equalToConstant: side),
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
             label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
             label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 5),
@@ -150,6 +181,26 @@ enum ClipboardAttachmentView {
             imageView.heightAnchor.constraint(equalToConstant: 34)
         ])
         return (container, size)
+    }
+
+    /// The start of a long path and its end, whatever fits `lines` at `width`.
+    static func middleElided(_ text: String, lines: Int, width: CGFloat, attributes: [NSAttributedString.Key: Any]) -> String {
+        func height(_ string: String) -> CGFloat {
+            ceil((string as NSString).boundingRect(with: NSSize(width: width, height: .greatestFiniteMagnitude),
+                                                   options: .usesLineFragmentOrigin, attributes: attributes).height)
+        }
+        let limit = height(Array(repeating: "X", count: lines).joined(separator: "\n"))
+        guard height(text) > limit else { return text }
+        let characters = Array(text)
+        var low = 2, high = characters.count - 1, best = "…"
+        while low <= high {
+            let kept = (low + high) / 2
+            // The file name at the end says more than the folders at the start.
+            let head = kept / 3
+            let candidate = String(characters.prefix(head)) + "…" + String(characters.suffix(kept - head))
+            if height(candidate) <= limit { best = candidate; low = kept + 1 } else { high = kept - 1 }
+        }
+        return best
     }
 
     private static func magnetContainer(size: NSSize) -> NSView {

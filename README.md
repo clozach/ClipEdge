@@ -1,8 +1,8 @@
 # ClipEdge
 
-A local clipboard drawer for macOS 14 or newer, including **macOS Tahoe 26**. Keep recent text, images and files beside the screen; search them, preview them, and pick one up for pasting. No server, subscription or network service is needed by the app.
+A local clipboard drawer for macOS 14 or newer, including **macOS Tahoe 26**. Keep recent text, images and files beside the screen; search them, preview them, and pick one up for pasting, or press **Option–Command–\\** and choose one by keyboard. The app needs no server or subscription. Its one network use is optional: a released copy can look on GitHub once a day for a newer version (see [Updates](#updates)). A copy built from source makes no network connections.
 
-## Build and install with ChatGPT / Codex
+## Install with ChatGPT / Codex
 
 On the Mac that will run ClipEdge, use an assistant with local Terminal access and say:
 
@@ -10,9 +10,19 @@ On the Mac that will run ClipEdge, use an assistant with local Terminal access a
 
 Read [AGENTS.md](AGENTS.md) for the agent's installation contract. A web-only chat cannot install software on your Mac. Run everything as the intended user, **without sudo**. This sets up that person's own app, settings and history.
 
-**First prerequisite:** Apple's Command Line Tools. Check `xcrun --find swiftc`; if unavailable, run `xcode-select --install` and finish Apple's installer before continuing. No Homebrew, Node, `just`, paid Apple account or Xcode GUI is required. Build on the destination Mac to match its Apple Silicon or Intel processor.
+**First prerequisite:** Apple's Command Line Tools. Check `xcrun --find swiftc`; if unavailable, run `xcode-select --install` and finish Apple's installer before continuing. No Homebrew, Node, `just`, paid Apple account or Xcode GUI is required.
 
-Clone `https://github.com/clozach/ClipEdge.git` into a folder under your home directory (for example `~/Developer/ClipEdge`). For later updates reuse that clean checkout, preserving any local edits. From its root:
+Clone `https://github.com/clozach/ClipEdge.git` into a folder under your home directory (for example `~/Developer/ClipEdge`). From its root, install the latest release:
+
+```sh
+bash tools/install-release.sh
+```
+
+It downloads the release, checks its checksum and signature, moves any previous ClipEdge to the Trash, installs `~/Applications/ClipEdge.app` and opens it; a failure restores the previous app. The release is signed with one certificate and keeps itself up to date, so macOS permissions are approved once (see [Updates](#updates)). If the latest release is not such a copy, the script changes nothing and exits with status 3; build from source instead.
+
+## Build from source
+
+A copy built on your own Mac never contacts the network and changes only when you rebuild it. For later updates reuse the same clean checkout, preserving any local edits. From its root:
 
 ```sh
 bash tools/update.sh
@@ -36,6 +46,18 @@ open "$HOME/Applications/ClipEdge.app"
 
 That path builds before quitting/replacing the old app. It uses the same Trash/rollback transaction. Both paths install the app only; neither deletes or imports a user's clipboard/settings.
 
+## Updates
+
+**A released copy** (installed by `tools/install-release.sh`, or updated from one) keeps itself up to date:
+
+- On first launch a small window asks once: *Keep ClipEdge up to date automatically?* It does not take the keyboard, so typing elsewhere cannot answer it. The answer is a setting with no expiry: ClipEdge menu bar icon → **Updates** → *Update Automatically* turns it on or off at any time. Until it is answered, nothing is requested from the network.
+- With updates on, ClipEdge asks GitHub once a day for the latest release (one request; it carries the ClipEdge version and nothing about the person or the clipboard). A newer release is downloaded, and macOS checks that it is the same app signed by the same developer as the running copy. A download that fails that check, or that is not newer, is discarded and never opened.
+- The update installs when ClipEdge is not in use: nothing held, no ClipEdge window open, and the keyboard and mouse still for two minutes. ClipEdge saves the history, swaps itself and reopens. The previous version goes to the Trash.
+- Because every release has the same signer, macOS keeps its Accessibility and Input Monitoring approvals across updates.
+- **Updates** in the menu also offers *Check for Updates Now*, *What's New* (the release notes) and *Go Back* to the previous version while it is still in the Trash. Going back turns automatic updates off, so the older version stays.
+
+**A copy built from source** has no update feed and never contacts the network. Its **Updates** menu says so and links to the release.
+
 ## Existing tab location and history
 
 Updates retain **`local.codex.ClipEdge`** as the bundle identifier and **`ClipEdgeTabPlacement`** as the saved preference key. The original supplied app and the imported source use this identity; the original source and current app use the same placement schema (edge, center fraction, length and display ID). Replacing an `.app` does not remove these per-user preferences.
@@ -48,11 +70,11 @@ Before an update, note the visible tab's edge/location. After it opens, compare.
 
 ## First launch on this Mac
 
-The app can run with a local ad-hoc signature; macOS permissions belong to this user and this app identity, not to the source repository.
+macOS permissions belong to this user and this app's signature, not to the source repository. A released copy keeps them across its own updates. A copy built without a certificate gets a new signature with every build.
 
-1. In System Settings → Privacy & Security, grant ClipEdge **Accessibility** and **Input Monitoring** when requested for paste detection/delivery. Quit/reopen after changing grants. Permission prompts cannot be approved by a README or copied from another Mac.
-2. If an ad-hoc update stops receiving input, remove/re-add the installed ClipEdge in those permission lists. A stable signing certificate can reduce repeated approvals; `CLIPEDGE_SIGN_IDENTITY` selects a local code-signing identity. The build otherwise selects a sole valid identity, or warns and uses ad-hoc signing.
-3. Copy harmless test text. Check history, All/Images/Text search, and **Control–Option–Space** for Quick Look. In the drawer, Space toggles preview and arrows follow the visible tab/search results. While an item follows the pointer, Command-click an empty editable document to paste it there; a plain click keeps holding the item, and Command-click on a link or list row keeps its usual meaning. Accessibility policy tests do not substitute for this physical check.
+1. In System Settings → Privacy & Security, grant ClipEdge **Accessibility** and **Input Monitoring** when requested for paste detection/delivery. Quit/reopen after changing grants. Permission prompts cannot be approved by a README or copied from another Mac. Moving from a copy built on this Mac to a released copy changes the signature once: remove the old ClipEdge entry (−) in both lists, then approve the new one.
+2. If a locally built update stops receiving input, remove/re-add the installed ClipEdge in those permission lists. A stable signing certificate can reduce repeated approvals; `CLIPEDGE_SIGN_IDENTITY` selects a local code-signing identity. The build otherwise selects a sole valid identity, or warns and uses ad-hoc signing.
+3. Copy harmless test text. Check history, All/Images/Text search, and **Control–Option–Space** for Quick Look. In the drawer, Space toggles preview and arrows follow the visible tab/search results. While an item follows the pointer, Command-click an empty editable document to paste it there; a plain click keeps holding the item, and Command-click on a link or list row keeps its usual meaning. Accessibility policy tests do not substitute for this physical check. Then press **Option–Command–\\** in any app: the history window opens with the newest item selected. Type to search; the same shortcut or the arrow keys choose; Command–1, 2 and 3 show All, Images or Text. Return pastes into the app you were in, Control–Command–Return pastes plain text, Command–C picks the item up without pasting, Command–O opens it in Preview, Tab offers apps to send the item to (Left Arrow or Escape goes back), Command–Delete twice deletes the item for good, and Shift–Command–Delete twice deletes the whole history. Escape clears the search, then closes the window. **Control–Command–V** pastes the clipboard as plain text with no ClipEdge window open.
 4. Confirm the tab remains where it was. Choose **Open at Login** in the ClipEdge menu if wanted. Optional Dock pin: `xcrun swift tools/pin-dock.swift`. The app runs outside Command-Tab; its Dock pin is a launch target.
 
 Verify package integrity with:
@@ -77,11 +99,11 @@ It quits ClipEdge, moves the new app to Trash and restores prior bundles to thei
 
 Created by **Chris Lozac'h** (<clozach@gmail.com>), with direction through prompting, a personal knowledge vault and development tooling, assisted by ChatGPT.app and Claude.app. Code and the bundled icon are released under the [MIT License](LICENSE). See [icon provenance](Resources/README.md).
 
-[Download the latest release](https://github.com/clozach/ClipEdge/releases/latest). The universal ZIP runs on Apple Silicon and Intel; `SHA256SUMS` checks its downloaded bytes. Local source builds remain the recommended route for the one-prompt installation.
+[The latest release](https://github.com/clozach/ClipEdge/releases/latest) is a universal ZIP for Apple Silicon and Intel with a `SHA256SUMS` file. `bash tools/install-release.sh` is the recommended way to install it: it checks the checksum and signature and leaves no quarantine mark for Gatekeeper to object to.
 
-For a binary install, quit ClipEdge using its menu, move the previous `.app` to Trash, unzip the download, and move `ClipEdge.app` into your own `~/Applications` folder. Open that copy and complete the first-launch checks above. Leave Library preferences/history in place; keep the old app in Trash until the new one works. Restore it from Trash if needed.
+To install a ZIP downloaded in a browser by hand: quit ClipEdge using its menu, move the previous `.app` to Trash, unzip the download, and move `ClipEdge.app` into your own `~/Applications` folder. The release is signed but **not notarized**, so macOS blocks a browser download at first launch; allow it under Privacy & Security → Open Anyway only for a release you trust. Do not disable Gatekeeper/SIP or recursively strip quarantine. Leave Library preferences/history in place; keep the old app in Trash until the new one works.
 
-`bash tools/release.sh` prepares a universal Apple Silicon + Intel ZIP and SHA-256 checksum under `.build/releases/`. This free build is **ad-hoc signed, not notarized**. A downloaded binary may be blocked by Gatekeeper. Prefer the local source-build path above, or follow macOS's explicit Privacy & Security → Open Anyway flow only for a release you trust. Do not disable Gatekeeper/SIP or recursively strip quarantine.
+`bash tools/release.sh` prepares that ZIP and checksum under `.build/releases/`, signed with the maintainer's certificate and a signing timestamp, and carrying the update feed. It refuses to build an unsigned release: such a copy cannot update itself and loses its macOS permissions on every update. [CHANGES.md](CHANGES.md) holds the notes each release publishes; `VERSION` holds the version number.
 
 Releases are built locally and uploaded to GitHub; no paid CI or signing service is required. GitHub Releases has no total release-size or bandwidth quota, and standard public-repository Actions runners are free. Apple Developer ID signing/notarization is a separate Apple Developer Program benefit ($99/year unless already enrolled). This project does not provision a paid service or signing certificate automatically. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) · [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) · [Apple memberships](https://developer.apple.com/support/compare-memberships/)
 
@@ -91,6 +113,7 @@ Releases are built locally and uploaded to GitHub; no paid CI or signing service
 bash tools/test.sh          # native fixture regression checks
 bash tools/test-install.sh  # isolated install, failure and rollback checks
 bash tools/test-update.sh   # local Git + mocked app update/failure checks
+bash tools/test-self-update.sh  # a stand-in app updates itself, reopens and goes back (needs a signing certificate)
 bash tools/build.sh         # current architecture; macOS 14 deployment target
 ```
 

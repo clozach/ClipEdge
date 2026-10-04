@@ -105,6 +105,18 @@ import AppKit
         browser.search.stringValue = "Rich"
         browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         check(browser.visibleEntries.map(\.id) == [rtf.id], "Text search includes RTF content")
+        func commandKey(_ character: String, _ code: UInt16, _ flags: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0, context: nil,
+                             characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)!
+        }
+        var finds = 0
+        browser.canvas.onFind = { finds += 1 }
+        browser.canvas.keyDown(with: commandKey("f", 3, [.command]))
+        check(finds == 1, "Command-F from the tiles asks for the search field")
+        browser.canvas.keyDown(with: commandKey("f", 3, [.command, .shift]))
+        browser.canvas.keyDown(with: commandKey("f", 3, []))
+        check(finds == 1, "only plain Command-F does")
+        check(ClipboardTileTooltip.rows.contains { $0 == ("Search", "⌘F") }, "the tile help names Command-F")
         print("PASS: \(assertions) browser assertions")
     }
 }

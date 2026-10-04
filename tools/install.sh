@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -x .build/ClipEdge.app/Contents/MacOS/ClipEdge ]] || tools/build.sh
 mkdir -p .build
-xcrun swiftc tools/InstallSupport.swift tools/Installer.swift -o .build/installer -framework AppKit
+xcrun swiftc InstallSupport.swift tools/Installer.swift -o .build/installer -framework AppKit
 stage=$(mktemp -d .build/install-source.XXXXXX)
 ditto .build/ClipEdge.app "$stage/ClipEdge.app"
 receipt="$PWD/.build/install-$(date +%Y%m%d-%H%M%S)-$$.json"

@@ -18,6 +18,13 @@ struct ClipboardPayload {
     let values: [(type: NSPasteboard.PasteboardType, data: Data)]
 }
 
+enum ClipboardFlavors {
+    /// Clipboard flavors treated as a picture.
+    static let images: Set<NSPasteboard.PasteboardType> = [
+        .png, .tiff, .pdf, NSPasteboard.PasteboardType("public.jpeg"), NSPasteboard.PasteboardType("com.compuserve.gif")
+    ]
+}
+
 final class ClipboardEntry {
     let id = UUID()
     let fingerprint: String
@@ -26,7 +33,9 @@ final class ClipboardEntry {
     let title: String
     let detail: String
     let kind: ClipboardKind
-    let thumbnail: NSImage?
+    /// A Finder item starts with its icon; Quick Look may supply a real thumbnail.
+    var thumbnail: NSImage?
+    var metadata = ClipboardMetadata()
     var searchIndex: ClipboardSearchState = .ready("")
     var recognizedText: String { if case .ready(let text) = searchIndex { return text }; return "" }
 
@@ -39,6 +48,7 @@ final class ClipboardEntry {
         self.detail = detail
         self.kind = kind
         self.thumbnail = thumbnail
+        metadata = .immediate(for: self)
     }
 
     var values: [(type: NSPasteboard.PasteboardType, data: Data)] { payloads.flatMap(\.values) }
@@ -55,6 +65,10 @@ final class ClipboardEntry {
         return nil
     }
     var isImage: Bool { kind == .image }
+    /// The quiet line beside a title: facts and paths, or the summary's own detail.
+    var edgeText: String { metadata.isEmpty ? detail : metadata.compact }
+    /// What a plain-text paste inserts: the entry's text, else its facts and paths.
+    var plainTextForPaste: String { plainText ?? metadata.pasteText }
     var dateTimeStamp: String { Self.stamp.string(from: capturedAt) }
     var fullDateTimeStamp: String { Self.fullStamp.string(from: capturedAt) }
     func matches(_ query: String) -> Bool {

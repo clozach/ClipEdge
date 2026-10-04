@@ -33,6 +33,7 @@ func validateApp(_ app: URL, identifier: String = "local.codex.ClipEdge") throws
 // The caller quits applications before entering this file-only transaction.
 // Neither preferences nor clipboard history is read, copied or rewritten here.
 func prepareInstall(target: URL, candidates: [URL], receiptURL: URL,
+                    identifier: String = "local.codex.ClipEdge",
                     trash: (URL) throws -> URL) throws {
     let fm = FileManager.default
     guard !fm.fileExists(atPath: receiptURL.path) else {
@@ -40,7 +41,7 @@ func prepareInstall(target: URL, candidates: [URL], receiptURL: URL,
     }
     let existing = Array(Set(candidates + [target])).filter { fm.fileExists(atPath: $0.path) }
     for app in existing {
-        try validateApp(app)
+        try validateApp(app, identifier: identifier)
         guard fm.isWritableFile(atPath: app.deletingLastPathComponent().path) else {
             throw installationError("No permission to replace \(app.path); move it to Trash in Finder, then retry.")
         }
@@ -58,10 +59,11 @@ func prepareInstall(target: URL, candidates: [URL], receiptURL: URL,
     }
 }
 
-func finishInstall(source: URL, receiptURL: URL, verify: (URL) throws -> Void) throws {
+func finishInstall(source: URL, receiptURL: URL, identifier: String = "local.codex.ClipEdge",
+                   verify: (URL) throws -> Void) throws {
     let fm = FileManager.default
     var receipt = try JSONDecoder().decode(InstallReceipt.self, from: Data(contentsOf: receiptURL))
-    try validateApp(source)
+    try validateApp(source, identifier: identifier)
     try verify(source)
     guard !receipt.installed, !fm.fileExists(atPath: receipt.target.path) else {
         throw installationError("Destination changed during update; no app overwritten: \(receipt.target.path)")
@@ -78,7 +80,8 @@ func finishInstall(source: URL, receiptURL: URL, verify: (URL) throws -> Void) t
     print("Installed: \(receipt.target.path)")
 }
 
-func restoreInstall(receiptURL: URL, trash: (URL) throws -> URL) throws {
+func restoreInstall(receiptURL: URL, identifier: String = "local.codex.ClipEdge",
+                    trash: (URL) throws -> URL) throws {
     let fm = FileManager.default
     var receipt = try JSONDecoder().decode(InstallReceipt.self, from: Data(contentsOf: receiptURL))
     // Refuse conflicts before changing anything. Rollback never overwrites files.
@@ -91,7 +94,7 @@ func restoreInstall(receiptURL: URL, trash: (URL) throws -> URL) throws {
         }
     }
     if receipt.installed && fm.fileExists(atPath: receipt.target.path) {
-        try validateApp(receipt.target)
+        try validateApp(receipt.target, identifier: identifier)
         _ = try trash(receipt.target)
     }
     receipt.installed = false

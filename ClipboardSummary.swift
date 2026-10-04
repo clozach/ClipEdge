@@ -25,15 +25,8 @@ enum ClipboardSummary {
             return (url.lastPathComponent, detail, .file, NSWorkspace.shared.icon(forFile: url.path))
         }
 
-        let imageTypes: Set<NSPasteboard.PasteboardType> = [
-            .png,
-            .tiff,
-            .pdf,
-            NSPasteboard.PasteboardType("public.jpeg"),
-            NSPasteboard.PasteboardType("com.compuserve.gif")
-        ]
         if let image = values.lazy.compactMap({ value -> NSImage? in
-            guard imageTypes.contains(value.type) else { return nil }
+            guard ClipboardFlavors.images.contains(value.type) else { return nil }
             return NSImage(data: value.data)
         }).first {
             let size = image.size

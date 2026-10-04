@@ -19,7 +19,7 @@ if [[ -n $(git status --porcelain) ]]; then
 fi
 git rev-parse --abbrev-ref '@{upstream}' >/dev/null
 mkdir -p .build
-xcrun swiftc tools/InstallSupport.swift tools/Installer.swift -o .build/installer -framework AppKit
+xcrun swiftc InstallSupport.swift tools/Installer.swift -o .build/installer -framework AppKit
 receipt="$PWD/.build/update-$(date +%Y%m%d-%H%M%S)-$$.json"
 rollback() {
     local result=$?

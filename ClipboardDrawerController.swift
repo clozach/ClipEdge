@@ -2,10 +2,15 @@ import AppKit
 
 final class ClipboardDrawerController: NSObject {
     private let store: ClipboardStore
+    private let recall: ClipboardRecallMemory
+    /// When the drawer last closed: it keeps its own search, so only a later use replaces it.
+    private var closedAt: Date?
     private let panel: NSPanel
     let browser = ClipboardBrowserView()
     let header = ClipboardDrawerHeader()
     let previewService = ClipboardPreviewService()
+    let paster: ClipboardPaster
+    let sendToPopover: ClipboardSendToPopover
     private var isConfirmingDeletion = false
     let magnetController: ClipboardMagnetController
     private var targetScreen: NSScreen?
@@ -18,7 +23,8 @@ final class ClipboardDrawerController: NSObject {
     private var expanded = false
     private var keyMonitor: Any?
     private let activate: () -> Void
-    private var previousApplication: NSRunningApplication?
+    /// The app to return to, and to paste into, while the drawer holds focus.
+    private(set) var previousApplication: NSRunningApplication?
     private var interactionPlacement = ClipboardTabPlacement()
     private var interactionOffset = NSPoint.zero
     private var interactionWallOffset = NSPoint.zero
@@ -26,10 +32,11 @@ final class ClipboardDrawerController: NSObject {
     var isVisible: Bool { panel.isVisible && expanded }
     weak var revealSettingsWindow: NSWindow?
     var allowsAutomaticHiding: Bool {
-        !isConfirmingDeletion && revealSettingsWindow?.isVisible != true &&
+        !isConfirmingDeletion && !sendToPopover.isVisible && revealSettingsWindow?.isVisible != true &&
         !(panel.isKeyWindow && panel.firstResponder === browser.search.currentEditor())
     }
     var onRevealSettings: (() -> Void)?
+    var sendSources = ClipboardSendTo.Sources()
     var isInteractingWithTab: Bool { glass.tabControl.isInteracting }
     var tabFrame: NSRect? { expanded ? dockLayout?.expandedTabFrame : dockLayout?.tabFrame }
     var bodyFrame: NSRect? { isVisible ? dockLayout?.bodyFrame : nil }
@@ -41,9 +48,14 @@ final class ClipboardDrawerController: NSObject {
 
     init(store: ClipboardStore, magnetController: ClipboardMagnetController = ClipboardMagnetController(),
          panel suppliedPanel: NSPanel? = nil, defaults: UserDefaults? = .standard,
+         paster: ClipboardPaster? = nil, sendToPopover: ClipboardSendToPopover = ClipboardSendToPopover(),
+         recall: ClipboardRecallMemory = ClipboardRecallMemory(minutes: { 0 }),
          activate: @escaping () -> Void = {}) {
         self.store = store
+        self.recall = recall
         self.magnetController = magnetController
+        self.paster = paster ?? ClipboardPaster(store: store)
+        self.sendToPopover = sendToPopover
         self.defaults = defaults
         self.activate = activate
         tabPlacement = defaults?.data(forKey: Self.placementKey)
@@ -90,6 +102,7 @@ final class ClipboardDrawerController: NSObject {
         if !expanded {
             previousApplication = NSWorkspace.shared.frontmostApplication
             if previousApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { previousApplication = nil }
+            if let recalled = recall.recall(usedAfter: closedAt) { browser.restore(recalled) }
         }
         targetScreen = screen
         expanded = true
@@ -103,6 +116,8 @@ final class ClipboardDrawerController: NSObject {
     func hide(animated _: Bool) {
         guard expanded else { return }
         expanded = false
+        closedAt = recall.now()
+        sendToPopover.close()
         ClipboardTileTooltip.shared.hide()
         panel.resignKey()
         if NSApplication.shared.isActive { previousApplication?.activate(options: []) }
@@ -113,7 +128,8 @@ final class ClipboardDrawerController: NSObject {
 
     func contains(_ screenPoint: NSPoint) -> Bool {
         tabContains(screenPoint) || (isVisible && (dockLayout?.bodyFrame.contains(screenPoint) == true ||
-            magnetController.drawerAnchor?.contains(screenPoint) == true))
+            magnetController.drawerAnchor?.contains(screenPoint) == true ||
+            (sendToPopover.isVisible && sendToPopover.frame.contains(screenPoint))))
     }
 
     func tabContains(_ point: NSPoint) -> Bool {
@@ -291,14 +307,47 @@ final class ClipboardDrawerController: NSObject {
             self.store.previewInCarousel(entry, among: self.browser.visibleEntries)
         }
         browser.onClear = { [weak self] in self?.confirmClear() }
-        browser.canvas.onPick = { [weak self] entry in self?.resetPreviewCycle(); self?.store.selectForPaste(entry) }
+        browser.canvas.onPick = { [weak self] entry in
+            self?.resetPreviewCycle(); self?.remember(entry); self?.store.selectForPaste(entry)
+        }
         browser.canvas.onPreview = { [weak self] entry in self?.togglePreview(entry) }
         browser.canvas.onDelete = { [weak self] entry in self?.confirmDelete(entry) }
         browser.canvas.onOpen = { [weak self] entry in self?.openInPreview(entry) }
+        browser.canvas.onSendTo = { [weak self] entry in self?.showSendTo(entry) }
+        sendToPopover.view.onBack = { [weak self] in self?.sendToPopover.close() }
+        sendToPopover.onClose = { [weak self] in
+            // Back to the same selected tile, with the keyboard.
+            guard let self, self.isVisible else { return }
+            self.panel.makeKey()
+            self.panel.makeFirstResponder(self.browser.canvas)
+        }
         browser.canvas.onEscape = { [weak self] in self?.dismissAttachment() }
     }
 
-    private func reload() { browser.update(entries: store.entries, attachedID: store.liftedEntryID) }
+    private func reload() {
+        browser.update(entries: store.entries, attachedID: store.liftedEntryID)
+        if let held = store.entries.first(where: { $0.id == store.stagedEntryID }) { magnetController.refreshSmall(held) }
+    }
+
+    /// Tab on a tile: apps that can open it, then running apps to paste into.
+    private func showSendTo(_ entry: ClipboardEntry) {
+        guard isVisible, let layout = dockLayout, let screen = targetScreen else { return }
+        let items = ClipboardSendTo.openItems(for: entry, materializer: previewService.materializer)
+        let targets = ClipboardSendTo.targets(opening: items, sources: sendSources)
+        guard !targets.isEmpty else { NSSound.beep(); return }
+        ClipboardTileTooltip.shared.hide()
+        let anchor = ClipboardDrawerPreviewAnchor(drawer: layout.expandedFrame, screen: screen.visibleFrame, edge: tabPlacement.edge)
+        let rowY = browser.screenFrame(for: entry.id)?.midY
+        sendToPopover.view.onSend = { [weak self] target in self?.send(entry, to: target) }
+        sendToPopover.show(targets) { anchor.frame(fitting: $0, centeredAtY: rowY) }
+    }
+
+    private func send(_ entry: ClipboardEntry, to target: ClipboardSendTarget) {
+        remember(entry)
+        // Pasting into the app the drawer covered needs that app in front first.
+        hide(animated: true)
+        ClipboardSendTo.send(entry, to: target, paster: paster, sources: sendSources) { [weak self] error in self?.showError(error) }
+    }
 
     private func togglePreview(_ entry: ClipboardEntry) {
         if magnetController.isQuickLook, store.stagedEntryID == entry.id { store.cancelStaging() }
@@ -348,7 +397,7 @@ final class ClipboardDrawerController: NSObject {
     }
 
     private func confirmDelete(_ entry: ClipboardEntry) {
-        confirmRemoval(message: "Delete this clipboard item permanently?", detail: "🚨 This removes the item from ClipEdge, its saved history and preview copies. If it is on the clipboard, that is cleared too. Original files stay where they are. This cannot be undone.") { [weak self] in
+        confirmRemoval(message: "Delete this clipboard item permanently?", detail: "🚨 This removes the item from ClipEdge, its saved history and preview copies. If it is on the clipboard, that is cleared too. Original files stay where they are. This cannot be undone. Press ⌘⌫ again to delete.") { [weak self] in
             guard let self else { return }
             if !self.store.remove(entry) { self.showError(ClipEdgeError.cannotDelete) }
         }
@@ -363,11 +412,22 @@ final class ClipboardDrawerController: NSObject {
         alert.informativeText = detail
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete Permanently")
+        Self.acceptCommandDelete(alert.addButton(withTitle: "Delete Permanently"))
         if alert.runModal() == .alertSecondButtonReturn { perform() }
     }
 
+    /// A second ⌘⌫ confirms a deletion; Return and Esc still cancel.
+    static func acceptCommandDelete(_ button: NSButton) {
+        button.keyEquivalent = "\u{7F}"
+        button.keyEquivalentModifierMask = .command
+    }
+
+    private func remember(_ entry: ClipboardEntry) {
+        recall.remember(entry, tab: browser.currentTab, query: browser.search.stringValue)
+    }
+
     private func openInPreview(_ entry: ClipboardEntry) {
+        remember(entry)
         resetPreviewCycle()
         previewService.openInPreview(entry) { [weak self] error in if let error { self?.showError(error) } }
     }

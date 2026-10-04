@@ -238,7 +238,8 @@ final class CommandClickPaste {
         }
         return nil
     }
-    private static func postPaste(to pid: pid_t) -> Bool {
+    /// Command-V delivered to one app. Shared with ClipboardPaster.
+    static func postPaste(to pid: pid_t) -> Bool {
         guard AXIsProcessTrusted(), NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
               let source = CGEventSource(stateID: .privateState),
               let down = CGEvent(keyboardEventSource: source, virtualKey: 9, keyDown: true),

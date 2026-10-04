@@ -95,7 +95,49 @@ import AppKit
         magnet.onCancel?()
         drawer.browser.onHover?(imageTiles[0].entry)
         check(store.stagedEntryID == nil, "Escape or close prevents later hover reactivation")
-        print("PASS: \(assertions) drawer-preview geometry/hover/lifecycle assertions; named board, no input injection")
+        drawerRecallChecks()
+        print("PASS: \(assertions) drawer-preview geometry/hover/lifecycle/recall assertions; named board, no input injection")
+    }
+
+    /// The drawer keeps its own search across reopening; a use made after it
+    /// last closed (in the ⌥⌘\ window, say) replaces it within the minutes.
+    private static func drawerRecallChecks() {
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        for text in ["Forest walk", "Ocean swim", "Sunset walk"] {
+            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow()
+        }
+        store.cancelStaging()
+        var clock = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let memory = ClipboardRecallMemory(minutes: { 5 }, now: { clock })
+        let magnet = ClipboardMagnetController(panel: PreviewTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true),
+                                               commandClickEnabled: false)
+        let drawer = ClipboardDrawerController(store: store, magnetController: magnet,
+                                               panel: PreviewTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true),
+                                               defaults: nil, recall: memory)
+        defer { drawer.stop(); store.stop() }
+        let search = drawer.browser.search
+        drawer.show(on: NSScreen.main!)
+        search.stringValue = "walk"; drawer.browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        let forest = store.entries.first { $0.title == "Forest walk" }!
+        drawer.browser.canvas.onPick?(forest)
+        store.cancelStaging()
+        check(memory.last?.entryID == forest.id && memory.last?.query == "walk", "picking a tile remembers it and the drawer's search")
+        clock += 10; drawer.hide(animated: false)
+        search.stringValue = "ocean"; drawer.browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        clock += 10; drawer.show(on: NSScreen.main!)
+        check(search.stringValue == "ocean", "a use from before the drawer closed never replaces the search it kept")
+        clock += 10; drawer.hide(animated: false)
+        let sunset = store.entries.first { $0.title == "Sunset walk" }!
+        clock += 10; memory.remember(sunset, tab: .text, query: "sunset")
+        clock += 10; drawer.show(on: NSScreen.main!)
+        check(search.stringValue == "sunset" && drawer.browser.currentTab == .text && drawer.browser.canvas.selected?.entry === sunset,
+              "a later use elsewhere reopens the drawer on its tab and search, entry chosen")
+        clock += 10; drawer.hide(animated: false)
+        clock += 600; memory.remember(forest, tab: .all, query: "forest")
+        clock += 301; drawer.show(on: NSScreen.main!)
+        check(search.stringValue == "sunset", "an expired use leaves the drawer as it was")
     }
 }
 

@@ -117,10 +117,17 @@ import AppKit
         recorder.onRecord?(candidate)
         check(settings.quickLookShortcut == candidate && recorder.shortcut == candidate, "accepted shortcut changes preference and recorder")
         content.layoutSubtreeIfNeeded()
-        for control in [popup, slider, dismissal, recorder] {
+        let recall = controls.compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "Reopen on the last search" }!
+        let recallNote = controls.compactMap { $0 as? NSTextField }.first { $0.stringValue.hasPrefix("After you paste") }!
+        for control in [popup, slider, dismissal, recorder, recall, recallNote] {
             let frame = control.convert(control.bounds, to: content)
             check(!control.hasAmbiguousLayout && frame.width > 0 && frame.height > 0 && content.bounds.contains(frame), "settings control has nonempty, unambiguous in-window bounds")
         }
+        check(recall.numberOfItems == ClipboardRevealSettings.recallChoices.count && recall.titleOfSelectedItem == "For 5 minutes", "Reopen offers Off to 30 minutes, five selected")
+        recall.selectItem(at: 0)
+        _ = recall.sendAction(recall.action, to: recall.target)
+        check(settings.recallMinutes == 0, "choosing Off writes through")
+        check(recorder.nextKeyView?.nextKeyView === recall && recall.nextKeyView === popup, "the Reopen menu joins the keyboard loop")
         check(controller.makeMenuItem(keyEquivalent: ",").keyEquivalent == ",", "settings supports the standard menu shortcut")
     }
 

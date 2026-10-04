@@ -9,6 +9,8 @@ final class ClipboardCarouselView: NSView {
     private let close = NSButton(title: "×", target: nil, action: nil)
     private let position = NSTextField(labelWithString: "")
     private let stamp = NSTextField(labelWithString: "")
+    /// Quiet facts and paths beneath the date, along the preview's top edge.
+    private let meta = NSTextField(wrappingLabelWithString: "")
     private let fileMenu = NSPopUpButton()
     private var urls: [URL] = []
     private(set) var entryID: UUID?
@@ -25,6 +27,11 @@ final class ClipboardCarouselView: NSView {
         preview.autostarts = false
         stamp.font = .systemFont(ofSize: 11)
         stamp.textColor = .secondaryLabelColor
+        meta.font = .systemFont(ofSize: 10)
+        meta.textColor = .secondaryLabelColor
+        meta.lineBreakMode = .byCharWrapping
+        meta.maximumNumberOfLines = 3
+        meta.cell?.truncatesLastVisibleLine = true
         position.font = .systemFont(ofSize: 11)
         position.alignment = .center
         position.textColor = .secondaryLabelColor
@@ -37,13 +44,16 @@ final class ClipboardCarouselView: NSView {
         [previous, next, close].forEach { $0.title = ""; $0.imagePosition = .imageOnly }
         fileMenu.target = self; fileMenu.action = #selector(selectFile)
         fileMenu.setAccessibilityLabel("Files in this clipboard item")
-        [preview, stamp, position, previous, next, close, fileMenu].forEach(addSubview)
+        [preview, stamp, meta, position, previous, next, close, fileMenu].forEach(addSubview)
         update(entry: entry, urls: urls, position: index, count: count)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func update(entry: ClipboardEntry, urls: [URL], position index: Int, count: Int) {
         stamp.stringValue = entry.dateTimeStamp
         stamp.toolTip = entry.fullDateTimeStamp
+        meta.stringValue = entry.metadata.lines.joined(separator: "\n")
+        meta.toolTip = meta.stringValue
+        meta.isHidden = meta.stringValue.isEmpty
         position.stringValue = "\(index + 1) of \(count)   ·   ← → browse   ·   Esc drops"
         previous.isEnabled = count > 1; next.isEnabled = count > 1
         // Retain the remote Quick Look view and a grouped-file choice on resize.
@@ -62,7 +72,10 @@ final class ClipboardCarouselView: NSView {
         stamp.frame = NSRect(x: 12, y: bounds.height - 28, width: bounds.width - 54, height: 18)
         close.frame = NSRect(x: bounds.width - 33, y: bounds.height - 30, width: 24, height: 22)
         let filesHeight: CGFloat = urls.count > 1 ? 28 : 0
-        preview.frame = NSRect(x: 1, y: 40 + filesHeight, width: bounds.width - 2, height: max(0, bounds.height - 74 - filesHeight))
+        let metaWidth = bounds.width - 24
+        let metaHeight = meta.isHidden ? 0 : min(39, ceil(meta.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: metaWidth, height: 1_000)).height ?? 13)) + 4
+        meta.frame = NSRect(x: 12, y: bounds.height - 32 - metaHeight, width: metaWidth, height: metaHeight)
+        preview.frame = NSRect(x: 1, y: 40 + filesHeight, width: bounds.width - 2, height: max(0, bounds.height - 74 - filesHeight - metaHeight))
         fileMenu.frame = NSRect(x: 12, y: 41, width: bounds.width - 24, height: 25)
         previous.frame = NSRect(x: 12, y: 7, width: 35, height: 26)
         next.frame = NSRect(x: bounds.width - 47, y: 7, width: 35, height: 26)

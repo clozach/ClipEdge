@@ -3,6 +3,8 @@ import CryptoKit
 import UniformTypeIdentifiers
 
 final class ClipboardStore {
+    /// Posted with every `onChange`, for surfaces other than the drawer.
+    static let didChange = Notification.Name("ClipEdgeHistoryDidChange")
     private(set) var entries: [ClipboardEntry] = []
     var onChange: (() -> Void)?
     var onStagingChange: ((ClipboardStagingChange) -> Void)?
@@ -35,6 +37,11 @@ final class ClipboardStore {
     var onExternalCopy: (() -> Void)?
     var onRemove: ((ClipboardEntry) -> Void)?
     private let searchIndexer = ClipboardSearchIndexer()
+    private let fileInspector = ClipboardFileInspector()
+    private var plainLoan: (token: Int, original: ClipboardRestorePoint, changeCount: Int)?
+    private var plainLoanTokens = 0
+    private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+    private static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
 
     var stagedEntryID: UUID? { stagedEntry?.id }
     var liftedEntryID: UUID? {
@@ -73,6 +80,7 @@ final class ClipboardStore {
     @discardableResult
     func prepareForTermination() -> Bool {
         checkForChanges()
+        endPlainTextPaste()
         resolveStagingForShutdown()
         return saveNow()
     }
@@ -114,6 +122,62 @@ final class ClipboardStore {
         guard entries.contains(where: { $0.id == entry.id }) else { return }
         if liftedEntryID == entry.id { cancelStaging(); return }
         _ = stage(entry, preview: false)
+    }
+
+    /// Make an entry the clipboard's current item and the top of history with
+    /// nothing held: the history window and Send to paste it straight away.
+    @discardableResult
+    func makeCurrent(_ entry: ClipboardEntry) -> Bool {
+        checkForChanges()
+        resetCycle()
+        endPlainTextPaste()
+        guard entries.contains(where: { $0.id == entry.id }) else { return false }
+        if heldItem != nil {
+            heldItem = nil
+            onStagingChange?(.invalidated)
+        }
+        guard writeMaterializedToPasteboard(entry) else { return false }
+        promote(entry)
+        return true
+    }
+
+    /// Lend the clipboard a plain-text copy of what it holds, for one paste.
+    /// A tracked entry lends its text (or its facts and paths); an untracked
+    /// clipboard lends its own string; an empty one takes the top entry first.
+    func beginPlainTextPaste() -> Int? {
+        checkForChanges()
+        endPlainTextPaste()
+        if currentClipboardEntryID == nil, pasteboard.pasteboardItems?.isEmpty != false, let top = entries.first {
+            guard makeCurrent(top) else { return nil }
+        }
+        let tracked = entries.first { $0.id == currentClipboardEntryID }
+        let text = tracked?.plainTextForPaste ?? pasteboard.string(forType: .string) ?? ""
+        guard !text.isEmpty, let original = ClipboardRestorePoint.capture(
+            pasteboard, historyID: currentClipboardEntryID, limit: maximumPayloadBytes) else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(text, forType: .string)
+        // Clipboard managers, this one included, skip a transient copy.
+        item.setData(Data(), forType: Self.transientType)
+        if original.payloads.contains(where: { $0.values.contains { $0.type == Self.concealedType } }) {
+            item.setData(Data(), forType: Self.concealedType)
+        }
+        pasteboard.clearContents()
+        let didWrite = pasteboard.writeObjects([item])
+        if !didWrite { _ = original.restore(to: pasteboard) }
+        lastChangeCount = pasteboard.changeCount
+        guard didWrite else { return nil }
+        plainLoanTokens += 1
+        plainLoan = (plainLoanTokens, original, lastChangeCount)
+        return plainLoanTokens
+    }
+
+    /// Put the lent clipboard back, unless something newer was copied meanwhile.
+    func endPlainTextPaste(_ token: Int? = nil) {
+        guard let loan = plainLoan, token == nil || token == loan.token else { return }
+        plainLoan = nil
+        guard pasteboard.changeCount == loan.changeCount, loan.original.restore(to: pasteboard) else { return }
+        lastChangeCount = pasteboard.changeCount
+        currentClipboardEntryID = loan.original.historyID
     }
 
     func resetCycle() { cycle.reset() }
@@ -293,7 +357,7 @@ final class ClipboardStore {
         )
         entries.insert(entry, at: 0)
         currentClipboardEntryID = entry.id
-        indexText(entry)
+        deriveDetails(entry)
         if attach { attachToCursor(entry) }
         if entries.count > maximumEntries {
             let evicted = Array(entries.suffix(entries.count - maximumEntries))
@@ -324,14 +388,38 @@ final class ClipboardStore {
         onStagingChange?(.pickedUp(entry))
     }
 
+    /// Searchable text, disk facts and thumbnails arrive later, off the main thread.
+    private func deriveDetails(_ entry: ClipboardEntry) {
+        indexText(entry)
+        guard !entry.fileURLs.isEmpty else { return }
+        let retained: (ClipboardEntry?) -> ClipboardEntry? = { [weak self] entry in
+            guard let self, let entry, self.entries.contains(where: { $0.id == entry.id }) else { return nil }
+            return entry
+        }
+        fileInspector.inspect(entry.fileURLs, wantsThumbnail: entry.kind == .file, facts: { [weak self, weak entry] metadata in
+            guard let entry = retained(entry) else { return }
+            entry.metadata = metadata
+            self?.notifyChange()
+        }, thumbnail: { [weak self, weak entry] image in
+            guard let entry = retained(entry) else { return }
+            entry.thumbnail = image
+            self?.notifyChange()
+        })
+    }
+
     private func indexText(_ entry: ClipboardEntry) {
         guard entry.isImage || !entry.fileURLs.isEmpty else { return }
         entry.searchIndex = .pending
         searchIndexer.index(entry) { [weak self, weak entry] result in
             guard let self, let entry, self.entries.contains(where: { $0.id == entry.id }) else { return }
             entry.searchIndex = result
-            self.onChange?()
+            self.notifyChange()
         }
+    }
+
+    private func notifyChange() {
+        onChange?()
+        NotificationCenter.default.post(name: Self.didChange, object: self)
     }
 
     @discardableResult
@@ -353,7 +441,7 @@ final class ClipboardStore {
     }
 
     private func historyDidChange() {
-        onChange?()
+        notifyChange()
         schedulePersistence()
     }
 
@@ -421,8 +509,8 @@ final class ClipboardStore {
             }
 
             entries = loadedEntries
-            entries.forEach(indexText)
-            onChange?()
+            entries.forEach(deriveDetails)
+            notifyChange()
         } catch {
             quarantineUnreadableHistory(at: persistenceURL)
         }

@@ -4,7 +4,7 @@ import AppKit
 final class ClipboardTileTooltip {
     static let shared = ClipboardTileTooltip()
     static let rows = [("Pick up", "Return or click"), ("Preview magnet", "Space"),
-                       ("Open in Preview", "⌘O"), ("Delete", "⌫"),
+                       ("Open in Preview", "⌘O"), ("Send to", "Tab"), ("Search", "⌘F"), ("Delete", "⌫ or ⌘⌫"),
                        ("Paste held item", "⌘click"), ("Keep holding", "click"), ("Drop magnet", "Esc")]
     static var legendText: String { rows.map { "\($0.0) ← \($0.1)" }.joined(separator: "\n") }
     private weak var owner: ClipboardTile?
@@ -29,7 +29,7 @@ final class ClipboardTileTooltip {
         panel?.orderOut(nil); panel = nil; owner = nil
     }
 
-    static func content(for text: String) -> NSView {
+    static func content(for text: String, details: String = "") -> NSView {
         let view = NSView()
         view.wantsLayer = true
         view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
@@ -37,6 +37,11 @@ final class ClipboardTileTooltip {
         let summary = NSTextField(wrappingLabelWithString: String(text.prefix(700)))
         summary.maximumNumberOfLines = 5
         summary.font = .systemFont(ofSize: 11)
+        // Facts, paths and the full date wrap in full beneath the excerpt.
+        let facts = NSTextField(wrappingLabelWithString: details)
+        facts.font = .systemFont(ofSize: 11)
+        facts.textColor = .secondaryLabelColor
+        facts.isHidden = details.isEmpty
         let grid = NSGridView(views: rows.enumerated().map { index, pair in
             let left = NSTextField(labelWithString: pair.0)
             left.alignment = .right
@@ -50,8 +55,8 @@ final class ClipboardTileTooltip {
         grid.column(at: 2).xPlacement = .leading
         grid.columnSpacing = 5; grid.rowSpacing = 3
         for index in rows.indices { grid.row(at: index).height = 18 }
-        grid.row(at: 4).topPadding = 10
-        let stack = NSStackView(views: [summary, NSBox.separator(), grid])
+        grid.row(at: 5).topPadding = 10
+        let stack = NSStackView(views: [summary, facts, NSBox.separator(), grid])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 10
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
@@ -60,14 +65,15 @@ final class ClipboardTileTooltip {
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
             stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -12),
-            summary.widthAnchor.constraint(lessThanOrEqualToConstant: 330)
+            summary.widthAnchor.constraint(lessThanOrEqualToConstant: 330),
+            facts.widthAnchor.constraint(lessThanOrEqualToConstant: 330)
         ])
         view.setFrameSize(NSSize(width: max(280, stack.fittingSize.width + 24), height: stack.fittingSize.height + 24))
         return view
     }
 
     private func show(for tile: ClipboardTile) {
-        let content = Self.content(for: tile.tooltipText)
+        let content = Self.content(for: tile.tooltipSummary, details: tile.tooltipDetails)
         let point = NSEvent.mouseLocation
         let screen = tile.window?.screen?.visibleFrame ?? NSScreen.main!.visibleFrame
         let size = content.fittingSize

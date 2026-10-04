@@ -2,7 +2,8 @@ import AppKit
 
 /// Materializes files for the cursor carousel and opens payloads in Preview.
 final class ClipboardPreviewService {
-    let materializer = ClipboardMaterializer()
+    let materializer: ClipboardMaterializer
+    init(materializer: ClipboardMaterializer = ClipboardMaterializer()) { self.materializer = materializer }
     func openInPreview(_ entry: ClipboardEntry, completion: @escaping (Error?) -> Void) {
         do {
             let urls = try materializer.urls(for: entry, forPreviewApp: true)

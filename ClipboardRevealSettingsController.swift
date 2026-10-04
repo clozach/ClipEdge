@@ -13,6 +13,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
     private let recorder = ClipboardShortcutRecorder(frame: .zero)
     private let resetShortcut = NSButton(title: "Use Default", target: nil, action: nil)
     private let shortcutMessage = NSTextField(wrappingLabelWithString: "Click the shortcut to record a new combination.")
+    private let recallPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private var changeObserver: NSObjectProtocol?
     /// Registration must succeed before the preference (and displayed hints)
     /// change. A nil hook is for isolated settings fixtures, not live delivery.
@@ -21,7 +22,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
 
     init(settings: ClipboardRevealSettings) {
         self.settings = settings
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 574),
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 580),
                             styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
         panel.title = "ClipEdge Settings"
         panel.isReleasedWhenClosed = false
@@ -103,17 +104,28 @@ final class ClipboardRevealSettingsController: NSWindowController {
         shortcutRow.distribution = .fillEqually
         shortcutMessage.font = explanation.font
         shortcutMessage.textColor = .secondaryLabelColor
+        let recallTitle = NSTextField(labelWithString: "Reopen on the last search")
+        recallTitle.font = title.font
+        recallPicker.addItems(withTitles: ClipboardRevealSettings.recallChoices.map(ClipboardRevealSettings.recallTitle))
+        recallPicker.target = self
+        recallPicker.action = #selector(changeRecall)
+        recallPicker.setAccessibilityLabel("Reopen on the last search")
+        let recallExplanation = NSTextField(wrappingLabelWithString: "After you paste, copy, open or send an item, the drawer and the ⌥⌘\\ window reopen on the search that found it, with the item selected. Typing replaces the search.")
+        recallExplanation.font = explanation.font
+        recallExplanation.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [title, modePicker, labelRow, delaySlider, explanation,
                                        closeTitle, closeRow, dismissalSlider, closeExplanation,
-                                       shortcutTitle, shortcutRow, shortcutMessage])
+                                       shortcutTitle, shortcutRow, shortcutMessage,
+                                       recallTitle, recallPicker, recallExplanation])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.setCustomSpacing(20, after: explanation)
         stack.setCustomSpacing(20, after: closeExplanation)
+        stack.setCustomSpacing(20, after: shortcutMessage)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
-        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage] {
+        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage, recallPicker, recallExplanation] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -131,7 +143,8 @@ final class ClipboardRevealSettingsController: NSWindowController {
         delaySlider.nextKeyView = dismissalSlider
         dismissalSlider.nextKeyView = recorder
         recorder.nextKeyView = resetShortcut
-        resetShortcut.nextKeyView = modePicker
+        resetShortcut.nextKeyView = recallPicker
+        recallPicker.nextKeyView = modePicker
     }
 
     private func refresh() {
@@ -145,6 +158,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
         dismissalValue.stringValue = String(format: "%.2f seconds", settings.dismissalDelaySeconds)
         dismissalSlider.setAccessibilityValueDescription(dismissalValue.stringValue)
         recorder.shortcut = settings.quickLookShortcut
+        recallPicker.selectItem(at: ClipboardRevealSettings.recallChoices.firstIndex(of: settings.recallMinutes) ?? 0)
         switch settings.mode {
         case .instant: explanation.stringValue = "Brush the tab to open. Hover shows its resize handles."
         case .delayed: explanation.stringValue = "Keep the pointer over the tab for the chosen delay. Leaving the tab cancels opening."
@@ -156,6 +170,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
     @objc private func changeDelay() { settings.delaySeconds = (delaySlider.doubleValue * 20).rounded() / 20 }
     @objc private func changeDismissalDelay() { settings.dismissalDelaySeconds = (dismissalSlider.doubleValue * 20).rounded() / 20 }
     @objc private func restoreShortcut() { applyShortcut(.defaultQuickLook) }
+    @objc private func changeRecall() { settings.recallMinutes = ClipboardRevealSettings.recallChoices[recallPicker.indexOfSelectedItem] }
 
     private func applyShortcut(_ shortcut: ClipboardShortcut) {
         let status = onShortcutChange?(shortcut) ?? noErr

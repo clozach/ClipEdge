@@ -8,6 +8,9 @@ struct ClipboardShortcut: Equatable, Codable {
     private let modifierBits: UInt
     var modifiers: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifierBits) }
     static let defaultQuickLook = ClipboardShortcut(keyCode: UInt32(kVK_Space), modifiers: [.control, .option])!
+    /// Fixed chords: the history window, and "paste the top item as plain text".
+    static let history = ClipboardShortcut(keyCode: UInt32(kVK_ANSI_Backslash), modifiers: [.option, .command])!
+    static let plainPaste = ClipboardShortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: [.control, .command])!
 
     init?(keyCode: UInt32, modifiers: NSEvent.ModifierFlags) {
         let flags = modifiers.intersection([.control, .option, .shift, .command])

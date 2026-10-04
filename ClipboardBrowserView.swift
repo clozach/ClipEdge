@@ -11,9 +11,35 @@ enum ClipboardBrowserTab: Int, CaseIterable {
         case .text: return entry.kind == .text || entry.kind == .link || (entry.kind == .other && entry.plainText != nil)
         }
     }
+    /// One filter for the drawer and the history window: this tab's entries
+    /// that match every search word.
+    func visible(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
+        entries.filter { includes($0) && $0.matches(query) }
+    }
+}
+
+/// What the image-text reader is doing, for the line beside the item count.
+enum ClipboardIndexingNote: Equatable {
+    case reading, failed(String)
+    init?(_ entries: [ClipboardEntry]) {
+        if entries.contains(where: { if case .pending = $0.searchIndex { return true }; return false }) { self = .reading; return }
+        guard let message = entries.compactMap({ entry -> String? in
+            if case .failed(let message) = entry.searchIndex { return message }; return nil
+        }).first else { return nil }
+        self = .failed(message)
+    }
+    var text: String { self == .reading ? "Reading image text…" : "Some image text is unavailable" }
+    var help: String? { if case .failed(let message) = self { return message }; return nil }
 }
 
 final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
+    /// ⌘F from the tiles: the keyboard goes to the search, its text selected so typing replaces it.
+    func focusSearch() {
+        window?.makeFirstResponder(search)
+        search.currentEditor()?.selectAll(nil)
+        onInteraction?()
+    }
+
     let tabs = NSSegmentedControl(labels: ClipboardBrowserTab.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     let search = NSSearchField()
     let zoom = NSSlider(value: 2, minValue: 1, maxValue: 3, target: nil, action: nil)
@@ -38,7 +64,7 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
     var currentTab: ClipboardBrowserTab { ClipboardBrowserTab(rawValue: tabs.selectedSegment) ?? .all }
     var imagesOnly: Bool { currentTab == .images }
     var columns: Int { imagesOnly ? 4 - Int(zoom.doubleValue.rounded()) : 1 }
-    var visibleEntries: [ClipboardEntry] { entries.filter { currentTab.includes($0) && $0.matches(search.stringValue) } }
+    var visibleEntries: [ClipboardEntry] { currentTab.visible(entries, query: search.stringValue) }
     override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
@@ -46,7 +72,7 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
         tabs.selectedSegment = 0
         tabs.target = self; tabs.action = #selector(filterChanged)
         tabs.setAccessibilityLabel("Clipboard view")
-        search.placeholderString = "Search clipboard and image text"
+        search.placeholderString = "Search clipboard and image text  ⌘F"
         search.delegate = self
         search.sendsSearchStringImmediately = true
         search.setAccessibilityLabel("Search clipboard and image text")
@@ -74,6 +100,7 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         [tabs, search, zoom, scroll, count, empty, shortcut, clear].forEach(addSubview)
         canvas.onNavigate = { [weak self] in self?.onInteraction?() }
+        canvas.onFind = { [weak self] in self?.focusSearch() }
         search.nextKeyView = canvas
         canvas.nextKeyView = tabs
         tabs.nextKeyView = zoom
@@ -116,10 +143,9 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
             canvas.addSubview(promoted, positioned: .above, relativeTo: nil)
         }
         canvas.reconcile(liftedID: attachedID)
-        let pending = entries.contains { if case .pending = $0.searchIndex { return true }; return false }
-        let failure = entries.compactMap { entry -> String? in if case .failed(let message) = entry.searchIndex { return message }; return nil }.first
-        shortcut.stringValue = pending ? "Reading image text…" : (failure == nil ? "Quick Look  Space · \(quickLookHint)" : "Some image text is unavailable")
-        shortcut.toolTip = failure ?? "Quick Look hovered item ← Space\nNext clipboard item ← \(quickLookHint)"
+        let note = ClipboardIndexingNote(entries)
+        shortcut.stringValue = note?.text ?? "Quick Look  Space · \(quickLookHint)"
+        shortcut.toolTip = note?.help ?? "Quick Look hovered item ← Space\nNext clipboard item ← \(quickLookHint)"
         count.stringValue = "\(canvas.tiles.count) of \(entries.count) items"
         empty.stringValue = entries.isEmpty ? "Copy something to begin" : "No matching items"
         empty.isHidden = !canvas.tiles.isEmpty
@@ -202,4 +228,12 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
         return window.convertToScreen(tile.convert(tile.bounds, to: nil))
     }
     func reveal(_ id: UUID) { canvas.choose(id) }
+
+    /// Reopens on a remembered tab and search, choosing its entry if still shown.
+    func restore(_ recall: ClipboardRecall) {
+        tabs.selectedSegment = recall.tab.rawValue
+        search.stringValue = recall.search
+        filterChanged()
+        if canvas.tiles.contains(where: { $0.entry.id == recall.entryID }) { canvas.choose(recall.entryID) }
+    }
 }

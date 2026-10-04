@@ -31,6 +31,8 @@ final class ClipboardMagnetController {
     private var previewSize = NSSize.zero
     private var motion: Motion?
     private var isHolding = false
+    /// What the small magnet was drawn from: late facts or a thumbnail redraw it.
+    private var smallContent: (id: UUID, metadata: ClipboardMetadata, thumbnail: NSImage?)?
     // This is a rendered-pixel limit, including padding and the holding glyph.
     // Convert it to AppKit points using the display under the attachment.
     private var maximumAttachmentPixels: CGFloat { drawerAnchor != nil ? .greatestFiniteMagnitude : (isQuickLook ? 840 : 350) }
@@ -89,22 +91,7 @@ final class ClipboardMagnetController {
         isHolding = true
         presentation = .small
         panel.ignoresMouseEvents = true
-        let preview = ClipboardAttachmentView.makeHeldPreview(for: entry, maximumAttachmentPixels: maximumAttachmentPixels, holdingGlyphHeight: holdingGlyphHeight, shortcutHint: quickLookHint)
-        previewSize = preview.size
-        panel.setFrame(NSRect(origin: .zero, size: preview.size), display: false)
-        panel.contentView = preview.view
-        preview.view.layoutSubtreeIfNeeded()
-        // Freeze the preview into an image so shrinking the panel also shrinks
-        // its text, corners and image, rather than reflowing its constraints.
-        if let bitmap = preview.view.bitmapImageRepForCachingDisplay(in: preview.view.bounds) {
-            preview.view.cacheDisplay(in: preview.view.bounds, to: bitmap)
-            let image = NSImage(size: preview.size)
-            image.addRepresentation(bitmap)
-            let imageView = NSImageView(frame: NSRect(origin: .zero, size: preview.size))
-            imageView.image = image
-            imageView.imageScaling = .scaleAxesIndependently
-            panel.contentView = imageView
-        }
+        installSmallPreview(for: entry)
         let destination = pointerFrame()
         let origin = source.map { rect in
             NSRect(x: rect.midX - previewSize.width * 0.4,
@@ -120,6 +107,34 @@ final class ClipboardMagnetController {
         startTimer()
         pasteMonitor.start()
         if commandClickEnabled { commandClick.start() }
+    }
+
+    /// Disk facts and Quick Look thumbnails arrive after a copy has attached.
+    func refreshSmall(_ entry: ClipboardEntry) {
+        guard presentation == .small, let shown = smallContent, shown.id == entry.id,
+              shown.metadata != entry.metadata || shown.thumbnail !== entry.thumbnail else { return }
+        installSmallPreview(for: entry)
+    }
+
+    private func installSmallPreview(for entry: ClipboardEntry) {
+        smallContent = (entry.id, entry.metadata, entry.thumbnail)
+        let preview = ClipboardAttachmentView.makeHeldPreview(for: entry, maximumAttachmentPixels: maximumAttachmentPixels, holdingGlyphHeight: holdingGlyphHeight, shortcutHint: quickLookHint)
+        previewSize = preview.size
+        let visibleFrame = panel.frame
+        panel.setFrame(NSRect(origin: visibleFrame.origin, size: preview.size), display: false)
+        panel.contentView = preview.view
+        preview.view.layoutSubtreeIfNeeded()
+        // Freeze the preview into an image so shrinking the panel also shrinks
+        // its text, corners and image, rather than reflowing its constraints.
+        if let bitmap = preview.view.bitmapImageRepForCachingDisplay(in: preview.view.bounds) {
+            preview.view.cacheDisplay(in: preview.view.bounds, to: bitmap)
+            let image = NSImage(size: preview.size)
+            image.addRepresentation(bitmap)
+            let imageView = NSImageView(frame: NSRect(origin: .zero, size: preview.size))
+            imageView.image = image
+            imageView.imageScaling = .scaleAxesIndependently
+            panel.contentView = imageView
+        }
     }
 
     func showCarousel(entry: ClipboardEntry, urls: [URL], position: Int, count: Int,

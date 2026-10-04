@@ -5,6 +5,8 @@ if [[ $(uname -s) != Darwin ]] || ! xcrun --find swiftc >/dev/null 2>&1; then
     echo 'Install Apple Command Line Tools with xcode-select --install, then retry.' >&2
     exit 1
 fi
+version=$(tr -d '[:space:]' < VERSION)
+[[ $version =~ ^[0-9]+(\.[0-9]+){1,2}$ ]] || { echo "VERSION must look like 2.1 or 2.1.0; found '$version'." >&2; exit 1; }
 mkdir -p .build
 bundle_stage=$(mktemp -d .build/bundle.XXXXXX)
 trap 'rm -rf "$bundle_stage"' EXIT
@@ -14,11 +16,11 @@ binaries=()
 for arch in "${archs[@]}"; do
     case "$arch" in arm64|x86_64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; esac
     binary="$bundle_stage/ClipEdge-$arch"
-    xcrun swiftc -swift-version 5 -target "$arch-apple-macos14.0" -O *.swift -o "$binary" -framework AppKit -framework QuickLookUI -framework Vision -framework Carbon
+    xcrun swiftc -swift-version 5 -target "$arch-apple-macos14.0" -O *.swift -o "$binary" -framework AppKit -framework QuickLookUI -framework Vision -framework Carbon -framework QuickLookThumbnailing -framework AVFoundation
     binaries+=("$binary")
 done
 lipo -create "${binaries[@]}" -output "$bundle_stage/ClipEdge.app/Contents/MacOS/ClipEdge"
-cat > "$bundle_stage/ClipEdge.app/Contents/Info.plist" <<'PLIST'
+cat > "$bundle_stage/ClipEdge.app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -26,8 +28,8 @@ cat > "$bundle_stage/ClipEdge.app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>ClipEdge</string>
 <key>CFBundleExecutable</key><string>ClipEdge</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>2.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>$version</string>
+<key>CFBundleVersion</key><string>$version</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>LSUIElement</key><true/>
 <key>NSHighResolutionCapable</key><true/>
@@ -39,6 +41,11 @@ if [[ -f Resources/AppIcon.icns ]]; then
         cp Resources/AppIcon.icns "$bundle_stage/$icon_bundle/Contents/Resources/AppIcon.icns"
         /usr/libexec/PlistBuddy -c 'Add :CFBundleIconFile string AppIcon.icns' "$bundle_stage/$icon_bundle/Contents/Info.plist"
     done
+fi
+# Only a published release names an update feed. A copy built from source has none,
+# so it never contacts the network and never replaces itself.
+if [[ -n ${CLIPEDGE_UPDATE_FEED:-} ]]; then
+    /usr/libexec/PlistBuddy -c "Add :ClipEdgeUpdateFeed string $CLIPEDGE_UPDATE_FEED" "$bundle_stage/ClipEdge.app/Contents/Info.plist"
 fi
 # Carry the MIT notice with binary distributions as well as source.
 if [[ -f LICENSE ]]; then
@@ -57,7 +64,8 @@ if [[ -z "$signing_identity" ]]; then
     signing_identity=-
     echo 'WARNING: ad-hoc signing; Accessibility may need re-approval after each build. Set CLIPEDGE_SIGN_IDENTITY to a code-signing certificate.' >&2
 fi
-codesign --force --sign "$signing_identity" --identifier local.codex.ClipEdge "$bundle_stage/ClipEdge.app"
+# shellcheck disable=SC2086  # CLIPEDGE_SIGN_FLAGS is a deliberate word list (release.sh passes --timestamp).
+codesign --force --sign "$signing_identity" ${CLIPEDGE_SIGN_FLAGS:-} --identifier local.codex.ClipEdge "$bundle_stage/ClipEdge.app"
 codesign --verify --strict "$bundle_stage/ClipEdge.app"
 if [[ -e .build/ClipEdge.app ]]; then
     # Keep the prior bundle intact for rollback (and any still-running process).
