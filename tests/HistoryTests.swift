@@ -400,9 +400,113 @@ import AppKit
         check(press(51, [.shift, .command]) && !history.isConfirmingDeleteAll, "an empty history has nothing to delete")
         check(press(36) && press(8, .command, "c") && history.isVisible && store.liftedEntryID == nil, "Return and ⌘C on an empty history do nothing")
         recallChecks()
+        keyboardReturnChecks()
+        magnetChecks()
         check(ClipboardHistoryCommand.command(for: key(3, [.command], characters: "f")) == .find, "Command-F is the window's search key")
         check(ClipboardHistoryCommand.command(for: key(3, [.command, .shift], characters: "f")) == nil, "Shift-Command-F is left alone")
         print("PASS: \(assertions) history-window/paste/send-to/recall assertions; named board, injected delivery, no input injection")
+    }
+
+    /// Closing a window that holds the keyboard must not hand it to another ClipEdge window:
+    /// AppKit would activate ClipEdge, and typing and ⌘V would then go nowhere.
+    private static func keyboardReturnChecks() {
+        let closing = HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true) // reports itself key
+        let behind = ClipboardWindow(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        let question = UpdateConsentPanel { _ in }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05)) // earlier closes reset on the main queue
+        check(behind.canBecomeKey && question.canBecomeKey, "ClipEdge windows normally accept the keyboard")
+        ClipboardWindow.orderOutReturningKeyboard(closing)
+        check(!behind.canBecomeKey && !question.canBecomeKey && ClipboardWindow.mayBecomeKey(closing),
+              "while one closes, no other ClipEdge window, the update question included, can take the keyboard")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        check(behind.canBecomeKey && question.canBecomeKey, "the next moment, every window accepts the keyboard again")
+        let notKey = ClipboardWindow(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true)
+        ClipboardWindow.orderOutReturningKeyboard(notKey)
+        check(behind.canBecomeKey, "a window that no longer holds the keyboard (a click elsewhere closed it) gates nothing")
+    }
+
+    /// Settings › Cursor magnets: one switch, then On copy, From the drawer, From the window.
+    private static func magnetChecks() {
+        let settings = ClipboardRevealSettings(defaults: nil)
+        check(settings.magnetsEnabled && ClipboardMagnetSource.allCases.allSatisfy(settings.showsMagnet(for:)), "every magnet starts on")
+        settings.magnetSources.remove(.copy)
+        check(!settings.showsMagnet(for: .copy) && settings.showsMagnet(for: .drawer), "one source turns off alone")
+        settings.magnetsEnabled = false
+        check(ClipboardMagnetSource.allCases.allSatisfy { !settings.showsMagnet(for: $0) }, "the switch turns every magnet off")
+        settings.magnetsEnabled = true
+        check(settings.showsMagnet(for: .window) && !settings.showsMagnet(for: .copy), "turning the switch back on keeps the per-source choices")
+
+        let suite = "ClipEdge-magnet-tests-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let saved = ClipboardRevealSettings(defaults: defaults)
+        saved.magnetsEnabled = false; saved.magnetSources = [.window]
+        let reread = ClipboardRevealSettings(defaults: defaults)
+        check(!reread.magnetsEnabled && reread.magnetSources == [.window], "the switch and the choices survive a relaunch")
+        saved.magnetSources = []
+        check(ClipboardRevealSettings(defaults: defaults).magnetSources.isEmpty, "every choice off stays off after a relaunch")
+        defaults.set(["window", "someday"], forKey: "ClipEdgeMagnetSources")
+        check(ClipboardRevealSettings(defaults: defaults).magnetSources == [.window], "a saved choice this version doesn't know is skipped")
+
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        store.attachesCopiesToCursor = { settings.showsMagnet(for: .copy) }
+        board.clearContents(); board.setString("Copied with the copy magnet off", forType: .string); _ = store.saveNow()
+        check(store.entries.first?.title == "Copied with the copy magnet off" && store.stagedEntryID == nil,
+              "with On copy off, a copy joins the history without riding the cursor")
+        settings.magnetSources.insert(.copy)
+        board.clearContents(); board.setString("Copied with it on", forType: .string); _ = store.saveNow()
+        check(store.stagedEntryID == store.entries.first?.id && store.heldMagnetSource == .copy, "with On copy on, the copy rides the cursor as before")
+        store.cancelStaging()
+
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
+        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-magnet-tests-\(UUID().uuidString)"))
+        defer { materializer.removeAll() }
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
+        history.prepare = { nil }
+        history.pickupMagnet = { settings.showsMagnet(for: .window) }
+        settings.magnetSources.remove(.window)
+        history.hotKeyPressed(); _ = history.handleKey(key(125))
+        let older = history.selectedEntry!
+        _ = history.handleKey(key(8, .command, characters: "c"))
+        check(!history.isVisible && store.stagedEntryID == nil && store.entries.first === older && board.string(forType: .string) == older.plainTextForPaste,
+              "with From the window off, ⌘C puts the entry on the clipboard and at the top, holding nothing")
+        settings.magnetSources.insert(.window)
+        history.hotKeyPressed(); _ = history.handleKey(key(125))
+        let next = history.selectedEntry!
+        _ = history.handleKey(key(8, .command, characters: "c"))
+        check(store.stagedEntryID == next.id && store.heldMagnetSource == .window, "with From the window on, ⌘C holds the entry on the cursor as before")
+        store.cancelStaging()
+
+        let controller = ClipboardRevealSettingsController(settings: settings)
+        let content = controller.window!.contentView!
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
+        let boxes = descendants(content).compactMap { $0 as? NSButton }
+        let master = boxes.first { $0.title == "Show cursor magnets" }!
+        let sources = ClipboardMagnetSource.allCases.map { source in boxes.first { $0.title == source.title }! }
+        check(master.state == .on && sources.allSatisfy { !$0.isHiddenOrHasHiddenAncestor }, "with magnets on, the three choices show")
+        func loop(from start: NSView, steps: Int) -> [NSView] {
+            var views = [start]
+            for _ in 0..<steps { views.append(views.last!.nextKeyView!) }
+            return views
+        }
+        let modePicker = descendants(content).compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "Reveal mode" }!
+        check(loop(from: master, steps: 4).elementsEqual([master] + sources + [modePicker], by: ===),
+              "the keyboard goes from the switch through each choice, then back to the top")
+        let tall = controller.window!.frame.height
+        master.state = .off; _ = master.sendAction(master.action, to: master.target)
+        check(!settings.magnetsEnabled && sources.allSatisfy(\.isHiddenOrHasHiddenAncestor), "turning the switch off hides the three choices")
+        check(controller.window!.frame.height < tall, "the window shrinks to fit")
+        check(master.nextKeyView === modePicker, "with the switch off, the keyboard skips the hidden choices")
+        master.state = .on; _ = master.sendAction(master.action, to: master.target)
+        content.layoutSubtreeIfNeeded()
+        sources[1].state = .off; _ = sources[1].sendAction(sources[1].action, to: sources[1].target)
+        check(!settings.showsMagnet(for: .drawer) && settings.showsMagnet(for: .copy), "each choice writes through on its own")
+        for box in [master] + sources {
+            let frame = box.convert(box.bounds, to: content)
+            check(frame.width > 0 && content.bounds.contains(frame), "each magnet control sits inside the window")
+        }
     }
 
     /// The Reopen setting: using an entry remembers it with the tab and search

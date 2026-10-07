@@ -1,5 +1,13 @@
 # What's new in ClipEdge
 
+## 2.3
+
+- **Turn the cursor magnets off, all or some.** Settings → *Cursor magnets*: one switch, and while it is on, *On copy*, *From the drawer* and *From the window*. With one off, a copy just joins the history and a pick goes straight onto the clipboard, with nothing following the pointer. Quick Look still opens.
+- **An item's info no longer covers it.** Hover a card for 2 seconds and its info (text, facts and keys) opens next to the drawer, where Send to opens, instead of under the pointer.
+- **The keyboard comes back to your app.** Closing the Option–Command–\\ window with Esc, Return or Command–C returns the keyboard to the app you were in, so your next keys and your own Command–V land there.
+- **Editing the search works as usual:** select all, cut, copy, paste, undo and redo. (In the Option–Command–\\ window, Command–C still picks up the selected item.)
+- **Colors show as swatches.** A copied color value (hex, RGB, HSL) shows as a circle of that color; it still pastes as the text you copied.
+
 ## 2.1
 
 - **ClipEdge keeps itself up to date.** On first launch it asks once: "Keep ClipEdge up to date automatically?" If you say yes, it looks on GitHub once a day for a newer version, checks that the download is signed by the same developer as the copy you have, and installs it while you are not using ClipEdge. Nothing about you or your clipboard is sent. Your macOS permissions (Accessibility, Input Monitoring) carry over, so there is nothing to approve again. The ClipEdge menu bar icon → **Updates** turns this off, checks now, shows what changed, and goes back to the previous version.

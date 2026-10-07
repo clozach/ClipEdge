@@ -14,6 +14,10 @@ final class ClipboardRevealSettingsController: NSWindowController {
     private let resetShortcut = NSButton(title: "Use Default", target: nil, action: nil)
     private let shortcutMessage = NSTextField(wrappingLabelWithString: "Click the shortcut to record a new combination.")
     private let recallPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let magnetsBox = NSButton(checkboxWithTitle: "Show cursor magnets", target: nil, action: nil)
+    private let sourceBoxes = ClipboardMagnetSource.allCases.map { NSButton(checkboxWithTitle: $0.title, target: nil, action: nil) }
+    private let sourceStack = NSStackView()
+    private var stack: NSStackView?
     private var changeObserver: NSObjectProtocol?
     /// Registration must succeed before the preference (and displayed hints)
     /// change. A nil hook is for isolated settings fixtures, not live delivery.
@@ -22,7 +26,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
 
     init(settings: ClipboardRevealSettings) {
         self.settings = settings
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 580),
+        let panel = SettingsPanel(contentRect: NSRect(x: 0, y: 0, width: 420, height: 580),
                             styleMask: [.titled, .closable, .utilityWindow], backing: .buffered, defer: false)
         panel.title = "ClipEdge Settings"
         panel.isReleasedWhenClosed = false
@@ -113,19 +117,40 @@ final class ClipboardRevealSettingsController: NSWindowController {
         let recallExplanation = NSTextField(wrappingLabelWithString: "After you paste, copy, open or send an item, the drawer and the ⌥⌘\\ window reopen on the search that found it, with the item selected. Typing replaces the search.")
         recallExplanation.font = explanation.font
         recallExplanation.textColor = .secondaryLabelColor
+        let magnetsTitle = NSTextField(labelWithString: "Cursor magnets")
+        magnetsTitle.font = title.font
+        magnetsBox.target = self
+        magnetsBox.action = #selector(toggleMagnets)
+        for (index, box) in sourceBoxes.enumerated() {
+            box.tag = index
+            box.target = self
+            box.action = #selector(toggleSource(_:))
+        }
+        sourceStack.setViews(sourceBoxes, in: .leading)
+        sourceStack.orientation = .vertical
+        sourceStack.alignment = .leading
+        sourceStack.spacing = 6
+        sourceStack.edgeInsets = NSEdgeInsets(top: 0, left: 20, bottom: 0, right: 0)
+        let magnetsExplanation = NSTextField(wrappingLabelWithString: "A magnet shows what you are holding beside the pointer. Turn off any you don't want: copies still join the history, a pick without a magnet goes straight onto the clipboard, and Quick Look still opens.")
+        magnetsExplanation.font = explanation.font
+        magnetsExplanation.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [title, modePicker, labelRow, delaySlider, explanation,
                                        closeTitle, closeRow, dismissalSlider, closeExplanation,
                                        shortcutTitle, shortcutRow, shortcutMessage,
-                                       recallTitle, recallPicker, recallExplanation])
+                                       recallTitle, recallPicker, recallExplanation,
+                                       magnetsTitle, magnetsBox, sourceStack, magnetsExplanation])
+        self.stack = stack
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.setCustomSpacing(20, after: explanation)
         stack.setCustomSpacing(20, after: closeExplanation)
         stack.setCustomSpacing(20, after: shortcutMessage)
+        stack.setCustomSpacing(20, after: recallExplanation)
+        stack.setCustomSpacing(6, after: magnetsBox)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
-        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage, recallPicker, recallExplanation] {
+        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage, recallPicker, recallExplanation, magnetsExplanation] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -144,7 +169,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
         dismissalSlider.nextKeyView = recorder
         recorder.nextKeyView = resetShortcut
         resetShortcut.nextKeyView = recallPicker
-        recallPicker.nextKeyView = modePicker
+        recallPicker.nextKeyView = magnetsBox
     }
 
     private func refresh() {
@@ -159,17 +184,52 @@ final class ClipboardRevealSettingsController: NSWindowController {
         dismissalSlider.setAccessibilityValueDescription(dismissalValue.stringValue)
         recorder.shortcut = settings.quickLookShortcut
         recallPicker.selectItem(at: ClipboardRevealSettings.recallChoices.firstIndex(of: settings.recallMinutes) ?? 0)
+        magnetsBox.state = settings.magnetsEnabled ? .on : .off
+        for (source, box) in zip(ClipboardMagnetSource.allCases, sourceBoxes) {
+            box.state = settings.magnetSources.contains(source) ? .on : .off
+        }
+        // The three choices show only while magnets are on, and the keyboard loop follows what shows.
+        if !settings.magnetsEnabled, let focused = window?.firstResponder as? NSButton, sourceBoxes.contains(focused) {
+            window?.makeFirstResponder(magnetsBox)
+        }
+        sourceStack.isHidden = !settings.magnetsEnabled
+        stack?.setCustomSpacing(settings.magnetsEnabled ? 6 : stack?.spacing ?? 10, after: magnetsBox)
+        let shown = settings.magnetsEnabled ? sourceBoxes : []
+        for (box, next) in zip([magnetsBox] + shown, shown + [modePicker]) { box.nextKeyView = next }
         switch settings.mode {
         case .instant: explanation.stringValue = "Brush the tab to open. Hover shows its resize handles."
         case .delayed: explanation.stringValue = "Keep the pointer over the tab for the chosen delay. Leaving the tab cancels opening."
         case .click: explanation.stringValue = "Click the tab to open. Hover shows its resize handles."
         }
+        fitWindowToContent()
     }
 
     @objc private func changeRevealMode() { settings.mode = ClipboardRevealMode.allCases[modePicker.indexOfSelectedItem] }
     @objc private func changeDelay() { settings.delaySeconds = (delaySlider.doubleValue * 20).rounded() / 20 }
     @objc private func changeDismissalDelay() { settings.dismissalDelaySeconds = (dismissalSlider.doubleValue * 20).rounded() / 20 }
     @objc private func restoreShortcut() { applyShortcut(.defaultQuickLook) }
+    @objc private func toggleMagnets() { settings.magnetsEnabled = magnetsBox.state == .on }
+
+    @objc private func toggleSource(_ sender: NSButton) {
+        let source = ClipboardMagnetSource.allCases[sender.tag]
+        if sender.state == .on { settings.magnetSources.insert(source) } else { settings.magnetSources.remove(source) }
+    }
+
+    /// The window grows and shrinks with the magnet choices, keeping its top edge where it is.
+    private func fitWindowToContent() {
+        guard let window, let stack, let content = window.contentView else { return }
+        content.layoutSubtreeIfNeeded()
+        let height = ceil(stack.fittingSize.height) + 44
+        let frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: NSSize(width: content.bounds.width, height: height)))
+        guard abs(frame.height - window.frame.height) > 0.5 else { return }
+        var fitted = NSRect(x: window.frame.minX, y: window.frame.maxY - frame.height, width: window.frame.width, height: frame.height)
+        // Growing downward must not push the bottom edge off the screen.
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame, fitted.minY < visible.minY {
+            fitted.origin.y = min(visible.minY, visible.maxY - fitted.height)
+        }
+        window.setFrame(fitted, display: true)
+    }
+
     @objc private func changeRecall() { settings.recallMinutes = ClipboardRevealSettings.recallChoices[recallPicker.indexOfSelectedItem] }
 
     private func applyShortcut(_ shortcut: ClipboardShortcut) {
@@ -184,4 +244,9 @@ final class ClipboardRevealSettingsController: NSWindowController {
         }
         refresh()
     }
+}
+
+/// Settings must not take the keyboard while another ClipEdge window hands it back.
+private final class SettingsPanel: NSPanel {
+    override var canBecomeKey: Bool { ClipboardWindow.mayBecomeKey(self) && super.canBecomeKey }
 }

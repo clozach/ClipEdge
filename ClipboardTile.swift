@@ -126,7 +126,8 @@ final class ClipboardTile: NSControl {
         case .row:
             let iconRect = NSRect(x: 11, y: 14, width: 46, height: 46)
             let image = entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName)
-            if let image { drawImage(image, in: iconRect) }
+            if let color = entry.swatchColor { color.setFill(); NSBezierPath(ovalIn: iconRect).fill() }
+            else if let image { drawImage(image, in: iconRect) }
             drawText(entry.title, in: NSRect(x: 68, y: 10, width: bounds.width - 106, height: 34), size: 13, color: .labelColor)
             drawText(entry.edgeText, in: NSRect(x: 68, y: 47, width: bounds.width - 106, height: 16), size: 10, color: .secondaryLabelColor, truncation: .byTruncatingMiddle)
             drawText(entry.dateTimeStamp, in: NSRect(x: 68, y: 66, width: bounds.width - 78, height: 16), size: 10, color: .secondaryLabelColor)
@@ -141,8 +142,10 @@ final class ClipboardTile: NSControl {
                 path.stroke()
                 return
             }
-            if let image = entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName) {
-                drawImage(image, in: NSRect(x: 9, y: 7, width: 32, height: 32))
+            let iconRect = NSRect(x: 9, y: 7, width: 32, height: 32)
+            if let color = entry.swatchColor { color.setFill(); NSBezierPath(ovalIn: iconRect).fill() }
+            else if let image = entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName) {
+                drawImage(image, in: iconRect)
             }
             drawText(entry.title, in: textRect, size: 13, color: .labelColor)
             drawText(entry.edgeText, in: edgeRect, size: 10, color: .secondaryLabelColor, truncation: .byTruncatingMiddle)

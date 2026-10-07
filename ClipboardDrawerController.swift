@@ -81,7 +81,10 @@ final class ClipboardDrawerController: NSObject {
             guard let self, self.store.entries.indices.contains(0) else { return }
             self.browser.reveal(self.store.entries[0].id)
         }
-        store.onExternalCopy = { [weak self] in self?.resetPreviewCycle() }
+        // A copy made elsewhere replaces whatever was previewed, and the store drops the preview
+        // right after this: only the carousel resets. Handing it to the pointer, or closing it
+        // with drawer magnets off, would put the previous clipboard back over the new copy.
+        store.onExternalCopy = { [weak self] in self?.store.resetCycle() }
         store.onRemove = { [weak self] entry in
             guard let self else { return }
             do { try self.previewService.materializer.remove(entry) } catch { self.showError(error) }
@@ -236,6 +239,7 @@ final class ClipboardDrawerController: NSObject {
     private func stagingChanged(_ change: ClipboardStagingChange) {
         switch change {
         case .pickedUp(let entry):
+            ClipboardTileTooltip.shared.hide()
             let source = slotFrame(for: entry.id)
             reload()
             if let position = store.carouselPosition {
@@ -308,7 +312,7 @@ final class ClipboardDrawerController: NSObject {
         }
         browser.onClear = { [weak self] in self?.confirmClear() }
         browser.canvas.onPick = { [weak self] entry in
-            self?.resetPreviewCycle(); self?.remember(entry); self?.store.selectForPaste(entry)
+            self?.resetPreviewCycle(); self?.remember(entry); self?.pick(entry)
         }
         browser.canvas.onPreview = { [weak self] entry in self?.togglePreview(entry) }
         browser.canvas.onDelete = { [weak self] entry in self?.confirmDelete(entry) }
@@ -322,6 +326,14 @@ final class ClipboardDrawerController: NSObject {
             self.panel.makeFirstResponder(self.browser.canvas)
         }
         browser.canvas.onEscape = { [weak self] in self?.dismissAttachment() }
+        // A card's info opens where Send to does: beside the drawer, level with the card.
+        ClipboardTileTooltip.shared.besideDrawer = { [weak self] card, size in
+            self?.previewAnchor?.frame(fitting: size, centeredAtY: card.midY)
+        }
+        ClipboardTileTooltip.shared.isRoomTaken = { [weak self] in
+            guard let self else { return false }
+            return self.magnetController.drawerAnchor != nil || self.sendToPopover.isVisible
+        }
     }
 
     private func reload() {
@@ -381,7 +393,16 @@ final class ClipboardDrawerController: NSObject {
 
     private func resetPreviewCycle() {
         store.resetCycle()
-        if magnetController.isQuickLook, let entry = store.entries.first(where: { $0.id == store.stagedEntryID }) { magnetController.show(entry: entry, from: nil) }
+        guard magnetController.isQuickLook, let entry = store.entries.first(where: { $0.id == store.stagedEntryID }) else { return }
+        // Touching the drawer hands a preview to the pointer; with drawer magnets off it closes instead.
+        if pickupMagnet() { magnetController.show(entry: entry, from: nil) } else { store.cancelStaging() }
+    }
+
+    /// Settings › Cursor magnets changed: a magnet whose choice is now off lets go.
+    /// What it held stays on the clipboard, where a pick without a magnet would leave it.
+    func releaseMagnet(unlessShown shows: (ClipboardMagnetSource) -> Bool) {
+        guard magnetController.presentation == .small, let source = store.heldMagnetSource, !shows(source) else { return }
+        store.dropStaging()
     }
 
     private func dismissAttachment() {
@@ -420,6 +441,13 @@ final class ClipboardDrawerController: NSObject {
     static func acceptCommandDelete(_ button: NSButton) {
         button.keyEquivalent = "\u{7F}"
         button.keyEquivalentModifierMask = .command
+    }
+
+    /// Settings › Cursor magnets › From the drawer: with it off, picking a tile just makes it current.
+    var pickupMagnet: () -> Bool = { true }
+
+    private func pick(_ entry: ClipboardEntry) {
+        if pickupMagnet() { store.selectForPaste(entry, from: .drawer) } else if store.makeCurrent(entry) { browser.reveal(entry.id) }
     }
 
     private func remember(_ entry: ClipboardEntry) {

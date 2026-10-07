@@ -12,6 +12,18 @@ enum ClipboardRevealMode: String, CaseIterable {
     }
 }
 
+/// Where a cursor magnet can come from; each can be turned off on its own.
+enum ClipboardMagnetSource: String, CaseIterable {
+    case copy, drawer, window
+    var title: String {
+        switch self {
+        case .copy: return "On copy"
+        case .drawer: return "From the drawer"
+        case .window: return "From the window"
+        }
+    }
+}
+
 enum ClipboardRevealBehavior: Equatable {
     case instant
     case delayed(TimeInterval)
@@ -27,6 +39,8 @@ final class ClipboardRevealSettings {
     private static let dismissalKey = "ClipEdgeDismissalDelay"
     private static let shortcutKey = "ClipEdgeQuickLookShortcut"
     private static let recallKey = "ClipEdgeRecallMinutes"
+    private static let magnetsKey = "ClipEdgeMagnetsEnabled"
+    private static let magnetSourcesKey = "ClipEdgeMagnetSources"
     /// Off, then the minutes a reopened drawer or window offers the last search back.
     static let recallChoices = [0, 1, 2, 5, 10, 15, 30]
     private let defaults: UserDefaults?
@@ -35,6 +49,8 @@ final class ClipboardRevealSettings {
     private var storedDismissalDelay: TimeInterval
     private var storedShortcut: ClipboardShortcut
     private var storedRecallMinutes: Int
+    private var storedMagnetsEnabled: Bool
+    private var storedMagnetSources: Set<ClipboardMagnetSource>
 
     init(defaults: UserDefaults? = .standard) {
         self.defaults = defaults
@@ -44,6 +60,9 @@ final class ClipboardRevealSettings {
         storedShortcut = defaults?.data(forKey: Self.shortcutKey)
             .flatMap { try? JSONDecoder().decode(ClipboardShortcut.self, from: $0) } ?? .defaultQuickLook
         storedRecallMinutes = Self.validRecall((defaults?.object(forKey: Self.recallKey) as? NSNumber)?.intValue ?? 5)
+        storedMagnetsEnabled = (defaults?.object(forKey: Self.magnetsKey) as? NSNumber)?.boolValue ?? true
+        storedMagnetSources = (defaults?.stringArray(forKey: Self.magnetSourcesKey))
+            .map { Set($0.compactMap(ClipboardMagnetSource.init(rawValue:))) } ?? Set(ClipboardMagnetSource.allCases)
     }
 
     var mode: ClipboardRevealMode {
@@ -106,6 +125,32 @@ final class ClipboardRevealSettings {
             defaults?.set(minutes, forKey: Self.recallKey)
             NotificationCenter.default.post(name: Self.didChange, object: self)
         }
+    }
+
+    /// The one switch for every cursor magnet; turning it off keeps the per-source choices.
+    var magnetsEnabled: Bool {
+        get { storedMagnetsEnabled }
+        set {
+            guard newValue != storedMagnetsEnabled else { return }
+            storedMagnetsEnabled = newValue
+            defaults?.set(newValue, forKey: Self.magnetsKey)
+            NotificationCenter.default.post(name: Self.didChange, object: self)
+        }
+    }
+
+    var magnetSources: Set<ClipboardMagnetSource> {
+        get { storedMagnetSources }
+        set {
+            guard newValue != storedMagnetSources else { return }
+            storedMagnetSources = newValue
+            defaults?.set(ClipboardMagnetSource.allCases.filter(newValue.contains).map(\.rawValue), forKey: Self.magnetSourcesKey)
+            NotificationCenter.default.post(name: Self.didChange, object: self)
+        }
+    }
+
+    /// A magnet shows only when the switch is on and its source is chosen.
+    func showsMagnet(for source: ClipboardMagnetSource) -> Bool {
+        storedMagnetsEnabled && storedMagnetSources.contains(source)
     }
 
     static func recallTitle(_ minutes: Int) -> String {

@@ -75,7 +75,8 @@ macOS permissions belong to this user and this app's signature, not to the sourc
 1. In System Settings → Privacy & Security, grant ClipEdge **Accessibility** and **Input Monitoring** when requested for paste detection/delivery. Quit/reopen after changing grants. Permission prompts cannot be approved by a README or copied from another Mac. Moving from a copy built on this Mac to a released copy changes the signature once: remove the old ClipEdge entry (−) in both lists, then approve the new one.
 2. If a locally built update stops receiving input, remove/re-add the installed ClipEdge in those permission lists. A stable signing certificate can reduce repeated approvals; `CLIPEDGE_SIGN_IDENTITY` selects a local code-signing identity. The build otherwise selects a sole valid identity, or warns and uses ad-hoc signing.
 3. Copy harmless test text. Check history, All/Images/Text search, and **Control–Option–Space** for Quick Look. In the drawer, Space toggles preview and arrows follow the visible tab/search results. While an item follows the pointer, Command-click an empty editable document to paste it there; a plain click keeps holding the item, and Command-click on a link or list row keeps its usual meaning. Accessibility policy tests do not substitute for this physical check. Then press **Option–Command–\\** in any app: the history window opens with the newest item selected. Type to search; the same shortcut or the arrow keys choose; Command–1, 2 and 3 show All, Images or Text. Return pastes into the app you were in, Control–Command–Return pastes plain text, Command–C picks the item up without pasting, Command–O opens it in Preview, Tab offers apps to send the item to (Left Arrow or Escape goes back), Command–Delete twice deletes the item for good, and Shift–Command–Delete twice deletes the whole history. Escape clears the search, then closes the window. **Control–Command–V** pastes the clipboard as plain text with no ClipEdge window open.
-4. Confirm the tab remains where it was. Choose **Open at Login** in the ClipEdge menu if wanted. Optional Dock pin: `xcrun swift tools/pin-dock.swift`. The app runs outside Command-Tab; its Dock pin is a launch target.
+4. In either search, type a word, press **Command–A**, then type another: the word is replaced. Command–X cuts the selected search text, Command–V pastes text into the search, Command–Z undoes and Shift–Command–Z redoes. In the drawer's search, Command–C copies the selected text; in the history window, Command–C keeps its clipboard-item pickup action.
+5. Confirm the tab remains where it was. Choose **Open at Login** in the ClipEdge menu if wanted. Optional Dock pin: `xcrun swift tools/pin-dock.swift`. The app runs outside Command-Tab; its Dock pin is a launch target.
 
 Verify package integrity with:
 
@@ -111,6 +112,7 @@ Releases are built locally and uploaded to GitHub; no paid CI or signing service
 
 ```sh
 bash tools/test.sh          # native fixture regression checks
+bash tools/test-search-editing.sh # quit ClipEdge first; real panel events, fixture captures, clipboard returned
 bash tools/test-install.sh  # isolated install, failure and rollback checks
 bash tools/test-update.sh   # local Git + mocked app update/failure checks
 bash tools/test-self-update.sh  # a stand-in app updates itself, reopens and goes back (needs a signing certificate)

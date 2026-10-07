@@ -20,14 +20,14 @@ final class ClipboardStore {
     private var pendingPersistenceWorkItem: DispatchWorkItem?
     private var currentClipboardEntryID: UUID?
     private enum HeldItem {
-        case pickedUp(ClipboardEntry, original: ClipboardRestorePoint)
+        case pickedUp(ClipboardEntry, original: ClipboardRestorePoint, from: ClipboardMagnetSource)
         case previewed(ClipboardEntry, original: ClipboardRestorePoint)
         case copied(ClipboardEntry)
         var entry: ClipboardEntry {
-            switch self { case .pickedUp(let e, _), .previewed(let e, _), .copied(let e): return e }
+            switch self { case .pickedUp(let e, _, _), .previewed(let e, _), .copied(let e): return e }
         }
         var restorePoint: ClipboardRestorePoint? {
-            switch self { case .pickedUp(_, let point), .previewed(_, let point): return point; case .copied: return nil }
+            switch self { case .pickedUp(_, let point, _), .previewed(_, let point): return point; case .copied: return nil }
         }
     }
     private var holdingRevision: UInt64 = 0
@@ -35,6 +35,8 @@ final class ClipboardStore {
     private var stagedEntry: ClipboardEntry? { heldItem?.entry }
     private var cycle = ClipboardCycle()
     var onExternalCopy: (() -> Void)?
+    /// Settings › Cursor magnets › On copy: when false, a copy joins the history without riding the cursor.
+    var attachesCopiesToCursor: () -> Bool = { true }
     var onRemove: ((ClipboardEntry) -> Void)?
     private let searchIndexer = ClipboardSearchIndexer()
     private let fileInspector = ClipboardFileInspector()
@@ -45,8 +47,19 @@ final class ClipboardStore {
 
     var stagedEntryID: UUID? { stagedEntry?.id }
     var liftedEntryID: UUID? {
-        if case .pickedUp(let entry, _) = heldItem { return entry.id }
+        if case .pickedUp(let entry, _, _) = heldItem { return entry.id }
         return nil
+    }
+
+    /// Which Settings › Cursor magnets choice covers what is held, if it rides the pointer.
+    /// A preview rides it only after the drawer hands it over, so it counts as the drawer's.
+    var heldMagnetSource: ClipboardMagnetSource? {
+        switch heldItem {
+        case .copied: return .copy
+        case .pickedUp(_, _, let source): return source
+        case .previewed: return .drawer
+        case nil: return nil
+        }
     }
 
     convenience init() {
@@ -116,12 +129,12 @@ final class ClipboardStore {
         _ = saveNow()
     }
 
-    func selectForPaste(_ entry: ClipboardEntry) {
+    func selectForPaste(_ entry: ClipboardEntry, from source: ClipboardMagnetSource = .drawer) {
         checkForChanges()
         resetCycle()
         guard entries.contains(where: { $0.id == entry.id }) else { return }
         if liftedEntryID == entry.id { cancelStaging(); return }
-        _ = stage(entry, preview: false)
+        _ = stage(entry, pickedUpFrom: source)
     }
 
     /// Make an entry the clipboard's current item and the top of history with
@@ -265,7 +278,7 @@ final class ClipboardStore {
         if heldItem?.restorePoint?.historyID == entry.id {
             let empty = ClipboardRestorePoint(payloads: [], historyID: nil)
             switch heldItem {
-            case .pickedUp(let held, _): heldItem = .pickedUp(held, original: empty)
+            case .pickedUp(let held, _, let source): heldItem = .pickedUp(held, original: empty, from: source)
             case .previewed(let held, _): heldItem = .previewed(held, original: empty)
             default: break
             }
@@ -340,7 +353,7 @@ final class ClipboardStore {
             if attach { existing.capturedAt = Date() }
             entries.insert(existing, at: 0)
             currentClipboardEntryID = existing.id
-            if attach { attachToCursor(existing) }
+            if attach, attachesCopiesToCursor() { attachToCursor(existing) }
             historyDidChange()
             return
         }
@@ -358,7 +371,7 @@ final class ClipboardStore {
         entries.insert(entry, at: 0)
         currentClipboardEntryID = entry.id
         deriveDetails(entry)
-        if attach { attachToCursor(entry) }
+        if attach, attachesCopiesToCursor() { attachToCursor(entry) }
         if entries.count > maximumEntries {
             let evicted = Array(entries.suffix(entries.count - maximumEntries))
             entries.removeLast(entries.count - maximumEntries)
@@ -368,17 +381,18 @@ final class ClipboardStore {
     }
 
     @discardableResult
-    private func stage(_ entry: ClipboardEntry, preview: Bool = true) -> Bool {
+    /// Without a source the entry is previewed; with one it is picked up from there.
+    private func stage(_ entry: ClipboardEntry, pickedUpFrom source: ClipboardMagnetSource? = nil) -> Bool {
         let original: ClipboardRestorePoint
         switch heldItem {
-        case .pickedUp(_, let point), .previewed(_, let point): original = point
+        case .pickedUp(_, let point, _), .previewed(_, let point): original = point
         default:
             guard let point = ClipboardRestorePoint.capture(pasteboard, historyID: currentClipboardEntryID, limit: maximumPayloadBytes) else { return false }
             original = point
         }
         guard writeMaterializedToPasteboard(entry) else { return false }
         currentClipboardEntryID = entry.id
-        heldItem = preview ? .previewed(entry, original: original) : .pickedUp(entry, original: original)
+        heldItem = source.map { .pickedUp(entry, original: original, from: $0) } ?? .previewed(entry, original: original)
         onStagingChange?(.pickedUp(entry))
         return true
     }

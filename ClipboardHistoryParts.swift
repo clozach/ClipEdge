@@ -3,6 +3,7 @@ import AppKit
 /// One entry at reading size, with its date, facts and paths along the bottom edge.
 final class ClipboardHistoryCard: NSView {
     private let image = NSImageView()
+    private let swatch = ClipboardSwatchView(frame: .zero)
     private let text = NSTextField(wrappingLabelWithString: "")
     private let edge = NSTextField(wrappingLabelWithString: "")
     private(set) var entryID: UUID?
@@ -18,12 +19,13 @@ final class ClipboardHistoryCard: NSView {
         edge.textColor = .secondaryLabelColor
         edge.lineBreakMode = .byCharWrapping
         edge.isSelectable = false
-        [image, text, edge].forEach(addSubview)
+        [image, text, edge, swatch].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func show(_ entry: ClipboardEntry?) {
         entryID = entry?.id
+        swatch.color = entry?.swatchColor
         guard let entry else {
             image.image = nil; text.stringValue = ""; edge.stringValue = ""
             return
@@ -32,7 +34,7 @@ final class ClipboardHistoryCard: NSView {
         image.image = isText ? nil : (entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName))
         image.isHidden = isText
         // A picture needs no caption; a Finder item keeps its name beneath its thumbnail.
-        text.stringValue = isText ? String((entry.plainText ?? entry.title).prefix(4_000)) : (entry.isImage && entry.fileURLs.isEmpty ? "" : entry.title)
+        text.stringValue = swatch.color != nil ? "" : isText ? String((entry.plainText ?? entry.title).prefix(4_000)) : (entry.isImage && entry.fileURLs.isEmpty ? "" : entry.title)
         text.alignment = isText ? .natural : .center
         edge.stringValue = ([entry.dateTimeStamp] + entry.metadata.lines).joined(separator: "\n")
         edge.toolTip = entry.fullDateTimeStamp
@@ -47,7 +49,11 @@ final class ClipboardHistoryCard: NSView {
         let edgeHeight = ceil(edge.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 10_000)).height ?? 14)
         edge.frame = NSRect(x: inset, y: bounds.height - inset - edgeHeight, width: width, height: edgeHeight)
         let body = NSRect(x: inset, y: inset, width: width, height: max(0, edge.frame.minY - inset - 10))
-        if image.isHidden {
+        if swatch.color != nil {
+            let side = min(240, body.width, body.height)
+            swatch.frame = NSRect(x: body.midX - side / 2, y: body.midY - side / 2, width: side, height: side)
+            text.frame = .zero
+        } else if image.isHidden {
             text.frame = body
         } else {
             let captionHeight: CGFloat = text.stringValue.isEmpty ? 0 : 40

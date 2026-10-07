@@ -127,7 +127,7 @@ import AppKit
         recall.selectItem(at: 0)
         _ = recall.sendAction(recall.action, to: recall.target)
         check(settings.recallMinutes == 0, "choosing Off writes through")
-        check(recorder.nextKeyView?.nextKeyView === recall && recall.nextKeyView === popup, "the Reopen menu joins the keyboard loop")
+        check(recorder.nextKeyView?.nextKeyView === recall && (recall.nextKeyView as? NSButton)?.title == "Show cursor magnets", "the Reopen menu joins the keyboard loop, then the magnet switch")
         check(controller.makeMenuItem(keyEquivalent: ",").keyEquivalent == ",", "settings supports the standard menu shortcut")
     }
 

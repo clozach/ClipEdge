@@ -65,6 +65,14 @@ enum ClipboardAttachmentView {
     }
 
     private static func makePreview(for entry: ClipboardEntry, maximumSize: NSSize) -> (view: NSView, size: NSSize) {
+        if let color = entry.swatchColor {
+            let side = max(1, min(136, maximumSize.width, maximumSize.height))
+            let size = NSSize(width: side, height: side)
+            let swatch = ClipboardSwatchView(frame: NSRect(origin: .zero, size: size))
+            swatch.color = color
+            swatch.setAccessibilityLabel(entry.plainText)
+            return (swatch, size)
+        }
         switch entry.kind {
         case .image:
             return makeImagePreview(entry.thumbnail, maximumSize: maximumSize)

@@ -7,7 +7,7 @@ destination=$1
 mkdir -p "$destination/tools" "$destination/tests" "$destination/Resources"
 cp ./*.swift README.md AGENTS.md CHANGES.md VERSION Justfile .gitignore "$destination/"
 cp tests/*.swift "$destination/tests/"
-for file in build.sh install.sh install-release.sh update.sh Installer.swift test.sh test-install.sh test-update.sh test-self-update.sh InstallTests.swift UpdateFixture.swift export-source.sh release.sh watch.mjs pin-dock.swift; do
+for file in build.sh install.sh install-release.sh update.sh Installer.swift test.sh test-search-editing.sh SearchEditingCapture.swift test-install.sh test-update.sh test-self-update.sh InstallTests.swift UpdateFixture.swift export-source.sh release.sh watch.mjs pin-dock.swift; do
     cp "tools/$file" "$destination/tools/"
 done
 cp Resources/AppIcon.icns Resources/README.md "$destination/Resources/"

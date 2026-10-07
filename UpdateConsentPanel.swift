@@ -30,7 +30,7 @@ final class UpdateConsentPanel: NSPanel {
         orderFrontRegardless()
     }
 
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { ClipboardWindow.mayBecomeKey(self) }
     override var canBecomeMain: Bool { false }
 
     override func keyDown(with event: NSEvent) {

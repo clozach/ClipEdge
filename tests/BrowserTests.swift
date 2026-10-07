@@ -117,6 +117,24 @@ import AppKit
         browser.canvas.keyDown(with: commandKey("f", 3, []))
         check(finds == 1, "only plain Command-F does")
         check(ClipboardTileTooltip.rows.contains { $0 == ("Search", "⌘F") }, "the tile help names Command-F")
+
+        // A card's info rides the card, never the pointer, and never covers the card.
+        check(ClipboardTileTooltip.delay == 2, "a card's info waits 2 seconds of hovering")
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let card = NSRect(x: 1000, y: 500, width: 400, height: 90)
+        let size = NSSize(width: 360, height: 300)
+        let beside = NSRect(x: 632, y: 395, width: 360, height: 300)
+        let placed = ClipboardTileTooltip.frame(fitting: size, card: card, screen: screen, beside: beside)
+        check(placed == beside && !placed.intersects(card), "with room beside the drawer, the info opens there, level with the card")
+        let narrow = ClipboardTileTooltip.frame(fitting: size, card: card, screen: screen,
+                                                beside: NSRect(x: 0, y: 395, width: 200, height: 300))
+        check(!narrow.intersects(card) && narrow.maxY <= card.minY && screen.contains(narrow), "without that room, the info opens just below the card")
+        let low = NSRect(x: 1000, y: 40, width: 400, height: 90)
+        let raised = ClipboardTileTooltip.frame(fitting: size, card: low, screen: screen, beside: nil)
+        check(!raised.intersects(low) && raised.minY >= low.maxY && screen.contains(raised), "near the screen's bottom it opens above the card")
+        let edge = NSRect(x: 1300, y: 500, width: 400, height: 90)
+        let clamped = ClipboardTileTooltip.frame(fitting: size, card: edge, screen: screen, beside: nil)
+        check(screen.contains(clamped) && !clamped.intersects(edge), "it stays on screen beside a card at the screen's edge")
         print("PASS: \(assertions) browser assertions")
     }
 }

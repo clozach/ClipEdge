@@ -13,6 +13,8 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     var sendSources = ClipboardSendTo.Sources()
     var openInPreview: (ClipboardEntry, @escaping (Error?) -> Void) -> Void
     var onError: ((Error) -> Void)?
+    /// Settings › Cursor magnets › From the window: with it off, ⌘C just makes the entry current.
+    var pickupMagnet: () -> Bool = { true }
     private let store: ClipboardStore
     private let paster: ClipboardPaster
     private let recall: ClipboardRecallMemory
@@ -99,10 +101,11 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
         focusSearch(selectingAll: recalled != nil)
     }
 
+    /// The keyboard goes back to the app in front: see ClipboardWindow.orderOutReturningKeyboard.
     func close() {
         guard isVisible else { return }
         mode = .hidden
-        panel.orderOut(nil)
+        ClipboardWindow.orderOutReturningKeyboard(panel)
     }
 
     /// Centered a little above the middle, and never larger than the display.
@@ -176,7 +179,7 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
         view.footer.items = [
             .init(title: "Paste ⏎", help: "Paste the selected item where you were (Return)", action: onSelected { [weak self] in self?.paste($0, plain: false) }),
             .init(title: "Plain text ⌃⌘⏎", help: "Paste as plain text (Control-Command-Return)", action: onSelected { [weak self] in self?.paste($0, plain: true) }),
-            .init(title: "Copy ⌘C", help: "Put it on the clipboard without pasting (Command-C). It rides the cursor until you paste or press Escape, which brings back the previous clipboard.", action: onSelected { [weak self] in self?.pickUp($0) }),
+            .init(title: "Copy ⌘C", help: "Put it on the clipboard without pasting (Command-C). With cursor magnets on for the window, it rides the cursor until you paste, and Escape brings back the previous clipboard.", action: onSelected { [weak self] in self?.pickUp($0) }),
             .init(title: "Send to ⇥", help: "Open it in an app, or paste it into a running app (Tab)", action: onSelected { [weak self] in self?.beginSendTo($0) }),
             .init(title: "Open in Preview ⌘O", help: "Open in the Preview app (Command-O)", action: onSelected { [weak self] in self?.open($0) }),
             .init(title: "Delete ⌘⌫", help: "Delete permanently: press Command-Delete twice", action: onSelected { [weak self] in self?.requestDelete($0) })
@@ -255,10 +258,11 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
 
     /// The keyboard's pickup: the entry goes on the clipboard and rides the
     /// cursor magnet. Pasting moves it to the top; Esc restores the clipboard.
+    /// With window magnets off it just becomes the clipboard's current item.
     private func pickUp(_ entry: ClipboardEntry) {
         remember(entry)
         close()
-        store.selectForPaste(entry)
+        if pickupMagnet() { store.selectForPaste(entry, from: .window) } else { store.makeCurrent(entry) }
     }
 
     private func open(_ entry: ClipboardEntry) {

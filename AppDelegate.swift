@@ -27,6 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         drawerController.revealSettingsWindow = settingsController.window
         historyController = ClipboardHistoryController(store: clipboardStore, paster: drawerController.paster,
                                                        previewService: drawerController.previewService, recall: recall)
+        let magnets = revealSettings
+        clipboardStore.attachesCopiesToCursor = { magnets.showsMagnet(for: .copy) }
+        drawerController.pickupMagnet = { magnets.showsMagnet(for: .drawer) }
+        historyController.pickupMagnet = { magnets.showsMagnet(for: .window) }
         historyController.onError = { error in
             let alert = NSAlert()
             alert.messageText = "ClipEdge"
@@ -48,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         settingsController.onShortcutChange = { [weak self] shortcut in self?.hotKey.register(shortcut: shortcut) ?? -1 }
         NotificationCenter.default.addObserver(self, selector: #selector(refreshShortcutHints), name: ClipboardRevealSettings.didChange, object: revealSettings)
+        NotificationCenter.default.addObserver(self, selector: #selector(releaseMagnetsTurnedOff), name: ClipboardRevealSettings.didChange, object: revealSettings)
         refreshShortcutHints()
         let hotKeyStatus = hotKey.register(shortcut: revealSettings.quickLookShortcut)
         if hotKeyStatus != noErr {
@@ -219,6 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         drawerController.browser.quickLookHint = shortcut
         drawerController.magnetController.quickLookHint = shortcut
         statusItem.menu?.items.first(where: { $0.action == #selector(quickLookNext) })?.title = "Quick Look Next Item  \(shortcut)"
+    }
+
+    @objc private func releaseMagnetsTurnedOff() {
+        let magnets = revealSettings
+        drawerController.releaseMagnet { magnets.showsMagnet(for: $0) }
     }
 
     @objc private func clearHistory() {

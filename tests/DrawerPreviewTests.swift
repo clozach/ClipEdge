@@ -38,8 +38,15 @@ import AppKit
         drawer.show(on: NSScreen.main!)
         drawer.browser.canvas.tiles[1].onHover?()
         check(store.stagedEntryID == nil && magnet.presentation == .hidden, "hover alone never activates or stages preview")
+        let infoSize = NSSize(width: 360, height: 300), hoveredTile = drawer.browser.canvas.tiles[1]
+        let card = drawerPanel.convertToScreen(hoveredTile.convert(hoveredTile.bounds, to: nil))
+        if let info = ClipboardTileTooltip.shared.plannedFrame(for: hoveredTile, size: infoSize), let body = drawer.bodyFrame {
+            check(!info.intersects(card) && !info.intersects(body), "a card's info opens beside the drawer, covering nothing in it")
+            check(info.minY <= card.midY && info.maxY >= card.midY, "a card's info opens level with its card")
+        } else { check(false, "a card's info has a place while the drawer is open") }
         drawer.browser.canvas.onPreview?(entries[1])
         check(magnet.drawerAnchor != nil && store.stagedEntryID == entries[1].id, "Space target opens drawer-anchored preview")
+        check(ClipboardTileTooltip.shared.plannedFrame(for: hoveredTile, size: infoSize) == nil, "while Quick Look fills that room, a card's info waits")
         let originalFrame = magnet.frame
         let view = panel.contentView as! ClipboardCarouselView
         drawer.browser.canvas.tiles[2].onHover?()
@@ -138,6 +145,45 @@ import AppKit
         clock += 600; memory.remember(forest, tab: .all, query: "forest")
         clock += 301; drawer.show(on: NSScreen.main!)
         check(search.stringValue == "sunset", "an expired use leaves the drawer as it was")
+
+        // Settings › Cursor magnets › From the drawer.
+        drawer.pickupMagnet = { false }
+        let ocean = store.entries.first { $0.title == "Ocean swim" }!
+        drawer.browser.canvas.onPick?(ocean)
+        check(store.stagedEntryID == nil && store.entries.first === ocean && board.string(forType: .string) == "Ocean swim",
+              "with From the drawer off, picking a tile puts it on the clipboard and at the top, holding nothing")
+        drawer.pickupMagnet = { true }
+        drawer.browser.canvas.onPick?(forest)
+        check(store.stagedEntryID == forest.id && store.heldMagnetSource == .drawer, "with From the drawer on, picking a tile holds it as before")
+        drawer.releaseMagnet { $0 != .window }
+        check(store.stagedEntryID == forest.id, "turning off another choice leaves the held tile alone")
+        drawer.releaseMagnet { $0 != .drawer }
+        check(store.stagedEntryID == nil && magnet.presentation == .hidden && board.string(forType: .string) == "Forest walk",
+              "turning From the drawer off lets go of the tile, leaving it on the clipboard")
+
+        // A Quick Look preview turns into a magnet when the drawer is touched; with drawer magnets off it closes.
+        drawer.browser.canvas.onPreview?(sunset)
+        check(magnet.isQuickLook && store.stagedEntryID == sunset.id, "Space on a tile opens Quick Look")
+        drawer.pickupMagnet = { false }
+        drawer.browser.onInteraction?()
+        check(store.stagedEntryID == nil && magnet.presentation != .small && board.string(forType: .string) == "Forest walk",
+              "with From the drawer off, touching the drawer closes the preview and gives back the clipboard")
+        drawer.pickupMagnet = { true }
+        drawer.browser.canvas.onPreview?(sunset)
+        drawer.browser.onInteraction?()
+        check(store.stagedEntryID == sunset.id && magnet.presentation == .small, "with it on, the preview turns into a magnet as before")
+        store.cancelStaging()
+
+        // A copy made elsewhere while Quick Look is open is never overwritten by the old clipboard.
+        for magnetsOn in [false, true] {
+            drawer.pickupMagnet = { magnetsOn }
+            drawer.browser.canvas.onPreview?(sunset)
+            board.clearContents(); board.setString("Fresh copy \(magnetsOn)", forType: .string); _ = store.saveNow()
+            check(board.string(forType: .string) == "Fresh copy \(magnetsOn)" && store.entries.first?.title == "Fresh copy \(magnetsOn)",
+                  "a copy made while Quick Look is open stays on the clipboard (drawer magnets \(magnetsOn ? "on" : "off"))")
+            store.cancelStaging()
+        }
+        drawer.pickupMagnet = { true }
     }
 }
 
