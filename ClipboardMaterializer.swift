@@ -5,7 +5,15 @@ import UniformTypeIdentifiers
 /// Private derived preview files. Never copies an original Finder file or indexes clipboard payloads.
 final class ClipboardMaterializer {
     private let root: URL
-    init(root: URL = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-Previews", isDirectory: true)) {
+    static var defaultRoot: URL {
+        // Foundation's macOS temporaryDirectory ignores TMPDIR. Preparation
+        // tests need an explicit namespace while the real app stays running.
+        if let path = ProcessInfo.processInfo.environment["CLIPEDGE_TEST_PREVIEW_ROOT"], path.hasPrefix("/") {
+            return URL(fileURLWithPath: path, isDirectory: true).appendingPathComponent("ClipEdge-Previews", isDirectory: true)
+        }
+        return FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-Previews", isDirectory: true)
+    }
+    init(root: URL = ClipboardMaterializer.defaultRoot) {
         self.root = root
         // The app is single-instance. Old derived files have no value after restart.
         try? FileManager.default.removeItem(at: root)

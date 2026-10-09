@@ -41,3 +41,13 @@ grep -E '^(Skipped|Update file tests passed)' .build/update-file-tests.log
 
 xcrun swiftc -swift-version 5 "${sources[@]}" tests/ColorTests.swift -o .build/color-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
 .build/color-tests
+
+xcrun swiftc -swift-version 5 PublishModel.swift PublishProtocol.swift PublishProgress.swift PublishProcess.swift PublishReview.swift PublishController.swift tests/PublishTests.swift -o .build/publish-tests -framework AppKit
+.build/publish-tests
+xcrun swiftc -swift-version 5 PublishModel.swift PublishProtocol.swift PublishProgress.swift PublishProcess.swift PublishReview.swift PublishController.swift tests/PublishProgressTests.swift -o .build/publish-progress-tests -framework AppKit
+.build/publish-progress-tests
+xcrun swiftc -swift-version 5 "${sources[@]}" tests/PublishControlTests.swift -o .build/publish-control-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
+.build/publish-control-tests
+
+xcrun swiftc -swift-version 5 "${sources[@]}" tests/PrepareIsolationTests.swift -o .build/prepare-isolation-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
+.build/prepare-isolation-tests

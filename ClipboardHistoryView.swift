@@ -6,6 +6,7 @@ final class ClipboardHistoryView: NSView {
     let search = NSSearchField()
     let tabs = NSSegmentedControl(labels: ["All ⌘1", "Images ⌘2", "Text ⌘3"], trackingMode: .selectOne, target: nil, action: nil)
     let deleteAll = NSButton(title: "Delete all ⇧⌘⌫", target: nil, action: nil)
+    let publishControl = ClipboardPublishControl()
     let canvas = ClipboardCanvas()
     let card = ClipboardHistoryCard()
     let sendTo = ClipboardSendToView()
@@ -65,7 +66,7 @@ final class ClipboardHistoryView: NSView {
         sendTo.isHidden = true
         confirmation.isHidden = true
         divider.boxType = .separator
-        [search, tabs, deleteAll, count, scroll, divider, card, sendTo, confirmation, footer, empty].forEach(addSubview)
+        [search, tabs, deleteAll, publishControl, count, scroll, divider, card, sendTo, confirmation, footer, empty].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -131,7 +132,10 @@ final class ClipboardHistoryView: NSView {
         tabs.sizeToFit()
         tabs.frame.origin = NSPoint(x: listWidth + 16, y: 13)
         deleteAll.sizeToFit()
-        deleteAll.frame = NSRect(x: w - deleteAll.frame.width - 18, y: 15, width: deleteAll.frame.width + 6, height: 22)
+        deleteAll.frame = NSRect(x: w - deleteAll.frame.width - 18, y: 12, width: deleteAll.frame.width + 6, height: 22)
+        publishControl.sizeToFit()
+        publishControl.frame = NSRect(x: w - publishControl.frame.width - 16, y: 35,
+                                      width: publishControl.frame.width, height: 22)
         let top = Self.headerHeight
         scroll.frame = NSRect(x: 8, y: top, width: listWidth - 8, height: bodyHeight - top - 4)
         divider.frame = NSRect(x: listWidth + 7, y: top - 14, width: 1, height: bodyHeight - top + 14)

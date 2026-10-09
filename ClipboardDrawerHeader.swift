@@ -4,6 +4,7 @@ import AppKit
 final class ClipboardDrawerHeader: NSView {
     static let height: CGFloat = 36
     let settingsButton = NSButton()
+    let publishControl = ClipboardPublishControl()
     private let title = NSTextField(labelWithString: "ClipEdge")
     private let icon = NSImageView()
     var onSettings: (() -> Void)?
@@ -29,7 +30,7 @@ final class ClipboardDrawerHeader: NSView {
         settingsButton.keyEquivalentModifierMask = [.command]
         settingsButton.toolTip = "Reveal Settings ← ⌘,"
         settingsButton.setAccessibilityLabel("Reveal Settings, Command-comma")
-        [icon, title, settingsButton].forEach(addSubview)
+        [icon, title, settingsButton, publishControl].forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(appIcon:)") }
@@ -56,7 +57,11 @@ final class ClipboardDrawerHeader: NSView {
         super.layout()
         icon.frame = NSRect(x: 16, y: 8, width: 20, height: 20)
         let titleX: CGFloat = hasAppIcon ? 44 : 16
-        title.frame = NSRect(x: titleX, y: 9, width: max(0, bounds.width - titleX - 54), height: 20)
+        publishControl.sizeToFit()
+        publishControl.frame = NSRect(x: bounds.width - 50 - publishControl.frame.width, y: 6,
+                                      width: publishControl.frame.width, height: 24)
+        let titleRight = publishControl.isHidden ? bounds.width - 54 : publishControl.frame.minX - 6
+        title.frame = NSRect(x: titleX, y: 9, width: max(0, titleRight - titleX), height: 20)
         settingsButton.frame = NSRect(x: bounds.width - 42, y: 5, width: 28, height: 26)
     }
 
@@ -65,7 +70,10 @@ final class ClipboardDrawerHeader: NSView {
         NSRect(x: 16, y: bounds.height - 0.5, width: max(0, bounds.width - 32), height: 0.5).fill()
     }
 
-    override func resetCursorRects() { addCursorRect(settingsButton.frame, cursor: .pointingHand) }
+    override func resetCursorRects() {
+        addCursorRect(settingsButton.frame, cursor: .pointingHand)
+        if !publishControl.isHidden && publishControl.isEnabled { addCursorRect(publishControl.frame, cursor: .pointingHand) }
+    }
     @objc private func openSettings() { onSettings?() }
 
     private static func bundledApplicationIcon() -> NSImage? {

@@ -36,6 +36,7 @@ final class ClipboardDrawerController: NSObject {
         !(panel.isKeyWindow && panel.firstResponder === browser.search.currentEditor())
     }
     var onRevealSettings: (() -> Void)?
+    var onShow: (() -> Void)?
     var sendSources = ClipboardSendTo.Sources()
     var isInteractingWithTab: Bool { glass.tabControl.isInteracting }
     var tabFrame: NSRect? { expanded ? dockLayout?.expandedTabFrame : dockLayout?.tabFrame }
@@ -102,6 +103,7 @@ final class ClipboardDrawerController: NSObject {
     }
 
     func show(on screen: NSScreen, animated _: Bool = true) {
+        onShow?()
         if !expanded {
             previousApplication = NSWorkspace.shared.frontmostApplication
             if previousApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { previousApplication = nil }
@@ -284,7 +286,9 @@ final class ClipboardDrawerController: NSObject {
 
     /// Shared with fixture tests; no system input is synthesized.
     func handleDrawerKey(_ event: NSEvent) -> Bool {
-        guard isVisible, panel.isKeyWindow, !(panel.firstResponder is NSTextView),
+        guard isVisible, panel.isKeyWindow else { return false }
+        if header.publishControl.handleKey(event) { return true }
+        guard !(panel.firstResponder is NSTextView),
               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
         if event.keyCode == 49, let entry = browser.canvas.selected?.entry {
             if !event.isARepeat { togglePreview(entry) }
@@ -302,7 +306,8 @@ final class ClipboardDrawerController: NSObject {
         header.install(above: browser, in: glass.bodyContent)
         header.onSettings = { [weak self] in self?.onRevealSettings?() }
         browser.clear.nextKeyView = header.settingsButton
-        header.settingsButton.nextKeyView = browser.search
+        header.publishControl.onVisibilityChange = { [weak self] in self?.refreshHeaderKeyLoop() }
+        refreshHeaderKeyLoop()
         browser.onInteraction = { [weak self] in self?.resetPreviewCycle() }
         browser.onVisibleEntriesChange = { [weak self] in self?.refreshQuickLookPlacement() }
         browser.onHover = { [weak self] entry in
@@ -334,6 +339,14 @@ final class ClipboardDrawerController: NSObject {
             guard let self else { return false }
             return self.magnetController.drawerAnchor != nil || self.sendToPopover.isVisible
         }
+    }
+
+    private func refreshHeaderKeyLoop() {
+        if header.publishControl.isHidden, panel.firstResponder === header.publishControl {
+            panel.makeFirstResponder(header.settingsButton)
+        }
+        header.settingsButton.nextKeyView = header.publishControl.isHidden ? browser.search : header.publishControl
+        header.publishControl.nextKeyView = browser.search
     }
 
     private func reload() {

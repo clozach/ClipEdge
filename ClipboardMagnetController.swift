@@ -1,6 +1,14 @@
 import AppKit
 
 final class ClipboardMagnetController {
+    /// Effects that reach outside the fixture process. Release preparation
+    /// suppresses them while retaining the controller's layout and lifecycle.
+    struct SystemEffects {
+        var setCursor: (NSCursor) -> Void = { $0.set() }
+        var registerArrow: (ClipboardHotKey) -> Void = { _ = $0.register() }
+        var startCommandClick: (CommandClickPaste) -> Void = { $0.start() }
+    }
+    private let systemEffects: SystemEffects?
     var quickLookHint = "⌃⌥Space"
     var onCancel: (() -> Void)?
     var onPaste: ((NSPoint) -> Void)?
@@ -51,8 +59,17 @@ final class ClipboardMagnetController {
         let completion: (() -> Void)?
     }
 
-    init(pasteMonitor: PasteMonitor = PasteMonitor(), panel suppliedPanel: NSPanel? = nil,
-         commandClickEnabled: Bool = true) {
+    init(pasteMonitor suppliedMonitor: PasteMonitor? = nil, panel suppliedPanel: NSPanel? = nil,
+         commandClickEnabled: Bool = true, systemEffects: SystemEffects = SystemEffects()) {
+        let isolated = ClipboardWindow.isIsolatedTestRun
+        self.systemEffects = isolated ? nil : systemEffects
+        // Explicit fake monitors keep their injected-event tests. The normal
+        // default must never observe the user's apps from a release test run.
+        let pasteMonitor = suppliedMonitor ?? PasteMonitor(environment: isolated ? .init(
+            accessibilityTrusted: { false }, listenAccess: { false }, externalApplication: { false },
+            keyAction: { nil }, pointerLocation: { .zero },
+            beginObservation: { _ in }, refreshObservation: { _ in }
+        ) : PasteMonitor.Environment())
         self.pasteMonitor = pasteMonitor
         self.commandClickEnabled = commandClickEnabled
         panel = suppliedPanel ?? ClipboardWindow(
@@ -103,10 +120,10 @@ final class ClipboardMagnetController {
         panel.orderFrontRegardless()
         motion = Motion(from: panel.frame, destination: .pointer, start: ProcessInfo.processInfo.systemUptime,
                         duration: 0.22, completion: nil)
-        NSCursor.closedHand.set()
+        systemEffects?.setCursor(.closedHand)
         startTimer()
         pasteMonitor.start()
-        if commandClickEnabled { commandClick.start() }
+        if commandClickEnabled { systemEffects?.startCommandClick(commandClick) }
     }
 
     /// Disk facts and Quick Look thumbnails arrive after a copy has attached.
@@ -162,8 +179,8 @@ final class ClipboardMagnetController {
         pasteMonitor.start()
         // The open drawer owns local keys, including search-field caret movement.
         // Only the cursor carousel needs bare arrows while another app is active.
-        if anchor == nil { _ = previousKey.register(); _ = nextKey.register() }
-        if commandClickEnabled { commandClick.start() }
+        if anchor == nil { systemEffects?.registerArrow(previousKey); systemEffects?.registerArrow(nextKey) }
+        if commandClickEnabled { systemEffects?.startCommandClick(commandClick) }
     }
 
     func updateDrawerAnchor(_ anchor: ClipboardDrawerPreviewAnchor) {
@@ -275,7 +292,7 @@ final class ClipboardMagnetController {
     private func releaseCursor() {
         guard isHolding else { return }
         isHolding = false
-        NSCursor.arrow.set()
+        systemEffects?.setCursor(.arrow)
     }
 
     private func schedulePasteCompletion(at point: NSPoint) {

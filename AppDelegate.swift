@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private lazy var settingsController = ClipboardRevealSettingsController(settings: revealSettings)
     private var updateController: UpdateController!
     private var updateMenu: UpdateMenu!
+    private var publisher: PublishController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         clipboardStore = ClipboardStore()
@@ -44,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             saveBeforeQuit: { [weak self] in self?.clipboardStore.prepareForTermination() ?? false },
             quit: { NSApplication.shared.terminate(nil) }))
         updateMenu = UpdateMenu(controller: updateController)
+        configurePublishing()
         configureMainMenu()
         configureStatusItem()
         hotKey.onPress = { [weak self] in
@@ -80,10 +82,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         clipboardStore.start()
         edgeController.start()
         updateController.start()
+        publisher.start()
 
         DispatchQueue.main.async {
             if !CommandLine.arguments.contains("--no-permission-prompt") { PasteMonitor.requestPermissionIfNeeded() }
         }
+    }
+
+    @MainActor private func configurePublishing() {
+        publisher = PublishController.shared
+        let controls = [drawerController.header.publishControl, historyController.view.publishControl]
+        for control in controls {
+            publisher.observe(owner: control) { [weak control] in control?.apply($0) }
+            control.onPress = { [weak self, weak control] in self?.publisher.performAction(presenting: control?.window) }
+        }
+        drawerController.onShow = { [weak self] in self?.publisher.refresh() }
+        historyController.onShow = { [weak self] in self?.publisher.refresh() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

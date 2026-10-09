@@ -1,6 +1,6 @@
 # ClipEdge
 
-A local clipboard drawer for macOS 14 or newer, including **macOS Tahoe 26**. Keep recent text, images and files beside the screen; search them, preview them, and pick one up for pasting, or press **Option–Command–\\** and choose one by keyboard. The app needs no server or subscription. Its one network use is optional: a released copy can look on GitHub once a day for a newer version (see [Updates](#updates)). A copy built from source makes no network connections.
+A local clipboard drawer for macOS 14 or newer, including **macOS Tahoe 26**. Keep recent text, images and files beside the screen; search them, preview them, and pick one up for pasting, or press **Option–Command–\\** and choose one by keyboard. The app needs no server or subscription. A released copy can optionally look on GitHub once a day for a newer version (see [Updates](#updates)). An ordinary public source build makes no network connections. The maintainer copy also checks GitHub release status; see [Maintainer publication](#maintainer-publication).
 
 ## Install with ChatGPT / Codex
 
@@ -22,7 +22,7 @@ It downloads the release, checks its checksum and signature, moves any previous 
 
 ## Build from source
 
-A copy built on your own Mac never contacts the network and changes only when you rebuild it. For later updates reuse the same clean checkout, preserving any local edits. From its root:
+A copy built from the public repository never contacts the network and changes only when you rebuild it. For later updates reuse the same clean checkout, preserving any local edits. From its root:
 
 ```sh
 bash tools/update.sh
@@ -56,7 +56,7 @@ That path builds before quitting/replacing the old app. It uses the same Trash/r
 - Because every release has the same signer, macOS keeps its Accessibility and Input Monitoring approvals across updates.
 - **Updates** in the menu also offers *Check for Updates Now*, *What's New* (the release notes) and *Go Back* to the previous version while it is still in the Trash. Going back turns automatic updates off, so the older version stays.
 
-**A copy built from source** has no update feed and never contacts the network. Its **Updates** menu says so and links to the release.
+**A copy built from source** has no update feed and never updates itself. An ordinary public source build makes no network requests. Its **Updates** menu says so and links to the release.
 
 ## Existing tab location and history
 
@@ -122,3 +122,19 @@ bash tools/build.sh         # current architecture; macOS 14 deployment target
 `just build/test/install/run/demo/watch` are optional conveniences. Only the watcher requires Node. Fixture/demo use must begin with normal ClipEdge quit: the app has one global shortcut/preview directory. `--demo` uses a named clipboard and disables cross-app delivery; don't substitute real clipboard contents in tests or screenshots.
 
 `tools/export-source.sh NEW_DESTINATION` copies an allowlist of portable code/tests/tooling for publication. It excludes private development history, evidence, machine-specific capture recipes, build products and the old Finder-icon backup. The public repository is a distribution snapshot exported from the maintainer’s canonical development source. Upstream contributions are reconciled there before the next release; avoid independent, divergent edits.
+
+## Maintainer publication
+
+The canonical development checkout can build a **maintainer copy**. Its drawer and history window show a bright pink **Publish… ⇧⌘P** button when the running app differs from the latest published app. It compares the app’s code, resources and build recipe, so reusing a version number does not hide unpublished work. Ordinary public builds and released copies have no publishing capability.
+
+Clicking Publish (or pressing Shift–Command–P in either view) freezes the matching source, runs the automated regression/install/update checks, and builds a signed universal release once. The review shows the proposed version and release notes. **Cancel** is the default; **Command–Return** explicitly publishes the reviewed candidate. Publication reuses those frozen bytes, checks that the previous public release has not changed, and checks the published result before hiding the button. Preparing and cancelling leaves a candidate available for review. After a restart the helper can reuse it when its content, notes, version and prior-release baseline still match. A failed publication can retry that same candidate.
+
+A gray **Check release** control means the comparison is unavailable, for example while offline. **Rebuild needed** means the editable source no longer matches this running copy: rebuild/install it before preparing a release. Status refreshes on launch, on opening either view (with a one-minute cache), and every five minutes. A hidden control does not prove another Mac has installed the release. Local and release version labels can differ (for example 2.3 and 2.3.1) while the app contents match.
+
+While preparing or publishing, the button fills as the helper finishes each step. The helper appends one JSON line per step to a progress file the app names with `--progress-file`; the pace between lines comes from the step durations of recent runs, kept in `.build/publisher/telemetry.json`. The tooltip names the current step.
+
+A pull request merged on GitHub can leave public `main` ahead of the latest release. Apply the same change to this canonical source and rebuild; preparation and publication accept public commits whose changes the candidate already contains, and stop with the commits named when it does not. The release commit is added on top of public `main`, keeping the contributor's commit.
+
+Local builds, private commits and pushes do not publish. Release notes come from `CHANGES.md`’s `Unreleased` section or the chosen next-version section; the next patch version is selected when necessary. The maintainer helper lives only in the canonical checkout and requires GitHub CLI access, Git and the compatible signing certificate. Public exports exclude the helper.
+
+For command-line use, `bash tools/publisher.sh status --running-fingerprint <installed-content-fingerprint>` checks status; `prepare` with the same argument creates a candidate and returns its review fields. Publication requires the returned candidate ID, content fingerprint, archive SHA-256, complete receipt SHA-256 and explicit `--approve`. The former bare `publish-release.sh --publish` command refuses to rebuild and publish implicitly. No approval means no release.

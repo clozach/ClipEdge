@@ -13,6 +13,7 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     var sendSources = ClipboardSendTo.Sources()
     var openInPreview: (ClipboardEntry, @escaping (Error?) -> Void) -> Void
     var onError: ((Error) -> Void)?
+    var onShow: (() -> Void)?
     /// Settings › Cursor magnets › From the window: with it off, ⌘C just makes the entry current.
     var pickupMagnet: () -> Bool = { true }
     private let store: ClipboardStore
@@ -85,6 +86,7 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     /// within the Reopen setting, from the last use: its tab and search, selected
     /// so typing replaces it, with that entry chosen.
     func show() {
+        onShow?()
         store.cancelStaging()
         returnTarget = prepare()
         let recalled = recall.recall()
@@ -119,7 +121,9 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     /// The window's keys while browsing. Anything without a command is typing
     /// for the search field. Shared with fixture tests; no input is synthesized.
     func handleKey(_ event: NSEvent) -> Bool {
-        guard case .browsing = mode, panel.isKeyWindow else { return false }
+        guard isVisible, panel.isKeyWindow else { return false }
+        if view.publishControl.handleKey(event) { return true }
+        guard case .browsing = mode else { return false }
         guard let command = ClipboardHistoryCommand.command(for: event) else { disarm(); return false }
         if command != .delete && command != .deleteAll && command != .escape { disarm() }
         let selected = selectedEntry

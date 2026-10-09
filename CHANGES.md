@@ -1,5 +1,11 @@
 # What's new in ClipEdge
 
+## 2.3.1
+
+- **Starting up no longer freezes on an unreachable file.** A copied file in iCloud or on a disconnected drive used to hold up launch while ClipEdge opened it. File items now show a type icon at once and load their preview in the background; images keep full resolution for search. (Found and fixed with ChatGPT on Mom's Mac.)
+- **Publish deliberately from the development copy.** A bright Publish button in the drawer and keyboard window shows when that running build differs from the latest published release. The button prepares a fixed, tested release for review; publishing uploads that same build. It disappears only after the published content is verified to match. While it prepares or publishes, the button fills as each step finishes. This maintainer control does not appear in ordinary installations.
+- **A failed release check stays visible.** Offline or failed checks show a neutral retry control. A published match describes the available release, not whether another Mac has installed it yet.
+
 ## 2.3
 
 - **Turn the cursor magnets off, all or some.** Settings → *Cursor magnets*: one switch, and while it is on, *On copy*, *From the drawer* and *From the window*. With one off, a copy just joins the history and a pick goes straight onto the clipboard, with nothing following the pointer. Quick Look still opens.

@@ -2,6 +2,42 @@ import AppKit
 
 /// A borderless nonactivating panel needs an explicit key-window opt-in for search.
 final class ClipboardWindow: NSPanel {
+    /// Frozen release checks run beside the real app. Keep their window state
+    /// testable without putting fixture panels on the user's desktop.
+    static var isIsolatedTestRun: Bool {
+        ProcessInfo.processInfo.environment["CLIPEDGE_TEST_PREVIEW_ROOT"] != nil
+    }
+    private let isolatesNativeWindow = ClipboardWindow.isIsolatedTestRun
+    private var fixtureVisible = false
+    private var fixtureKey = false
+    override var isVisible: Bool { isolatesNativeWindow ? fixtureVisible : super.isVisible }
+    override var isKeyWindow: Bool { isolatesNativeWindow ? fixtureKey : super.isKeyWindow }
+
+    override func orderFrontRegardless() {
+        if isolatesNativeWindow { fixtureVisible = true } else { super.orderFrontRegardless() }
+    }
+    override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if isolatesNativeWindow {
+            fixtureVisible = place != .out
+            if !fixtureVisible { fixtureKey = false }
+        } else { super.order(place, relativeTo: otherWin) }
+    }
+    override func orderFront(_ sender: Any?) {
+        if isolatesNativeWindow { fixtureVisible = true } else { super.orderFront(sender) }
+    }
+    override func orderOut(_ sender: Any?) {
+        if isolatesNativeWindow { fixtureVisible = false; fixtureKey = false } else { super.orderOut(sender) }
+    }
+    override func makeKey() {
+        if isolatesNativeWindow { fixtureKey = canBecomeKey } else { super.makeKey() }
+    }
+    override func resignKey() {
+        if isolatesNativeWindow { fixtureKey = false } else { super.resignKey() }
+    }
+    override func makeKeyAndOrderFront(_ sender: Any?) {
+        if isolatesNativeWindow { orderFront(sender); makeKey() } else { super.makeKeyAndOrderFront(sender) }
+    }
+
     /// The window closing right now; while set, no other ClipEdge window can take the keyboard.
     private static var closing: ObjectIdentifier?
     override var canBecomeKey: Bool { Self.mayBecomeKey(self) }
