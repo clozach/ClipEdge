@@ -6,6 +6,8 @@ sources=()
 for source in *.swift; do
     [[ "$source" == main.swift ]] || sources+=("$source")
 done
+xcrun swiftc -swift-version 5 "${sources[@]}" tests/FileInspectionTests.swift -o .build/file-inspection-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon -framework PDFKit
+.build/file-inspection-tests
 xcrun swiftc -swift-version 5 "${sources[@]}" tests/CoreTests.swift -o .build/core-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon -framework PDFKit
 .build/core-tests
 xcrun swiftc -swift-version 5 "${sources[@]}" tests/PickupTests.swift -o .build/pickup-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
