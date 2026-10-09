@@ -32,11 +32,12 @@ final class ClipboardEntry {
     let payloads: [ClipboardPayload]
     let title: String
     let detail: String
-    let kind: ClipboardKind
-    /// A Finder item starts with its icon; Quick Look may supply a real thumbnail.
+    var kind: ClipboardKind
+    /// A Finder item starts with a type icon; inspection supplies its real preview.
     var thumbnail: NSImage?
     var metadata = ClipboardMetadata()
     var searchIndex: ClipboardSearchState = .ready("")
+    var searchGeneration: UInt64 = 0
     var recognizedText: String { if case .ready(let text) = searchIndex { return text }; return "" }
 
     init(fingerprint: String, capturedAt: Date, payloads: [ClipboardPayload], title: String,

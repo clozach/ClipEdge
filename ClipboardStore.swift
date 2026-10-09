@@ -38,8 +38,8 @@ final class ClipboardStore {
     /// Settings › Cursor magnets › On copy: when false, a copy joins the history without riding the cursor.
     var attachesCopiesToCursor: () -> Bool = { true }
     var onRemove: ((ClipboardEntry) -> Void)?
-    private let searchIndexer = ClipboardSearchIndexer()
-    private let fileInspector = ClipboardFileInspector()
+    private let searchIndexer: ClipboardSearchIndexer
+    private let fileInspector: ClipboardFileInspector
     private var plainLoan: (token: Int, original: ClipboardRestorePoint, changeCount: Int)?
     private var plainLoanTokens = 0
     private static let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
@@ -66,9 +66,13 @@ final class ClipboardStore {
         self.init(pasteboard: .general, persistenceURL: Self.defaultPersistenceURL())
     }
 
-    init(pasteboard: NSPasteboard, persistenceURL: URL? = nil) {
+    init(pasteboard: NSPasteboard, persistenceURL: URL? = nil,
+         fileInspector: ClipboardFileInspector = ClipboardFileInspector(),
+         searchIndexer: ClipboardSearchIndexer = ClipboardSearchIndexer()) {
         self.pasteboard = pasteboard
         self.persistenceURL = persistenceURL
+        self.fileInspector = fileInspector
+        self.searchIndexer = searchIndexer
         lastChangeCount = pasteboard.changeCount
     }
 
@@ -410,22 +414,34 @@ final class ClipboardStore {
             guard let self, let entry, self.entries.contains(where: { $0.id == entry.id }) else { return nil }
             return entry
         }
-        fileInspector.inspect(entry.fileURLs, wantsThumbnail: entry.kind == .file, facts: { [weak self, weak entry] metadata in
+        fileInspector.inspect(entry.fileURLs, facts: { [weak self, weak entry] metadata in
             guard let entry = retained(entry) else { return }
             entry.metadata = metadata
             self?.notifyChange()
-        }, thumbnail: { [weak self, weak entry] image in
+        }, preview: { [weak self, weak entry] preview in
             guard let entry = retained(entry) else { return }
-            entry.thumbnail = image
+            switch preview {
+            case .image(let image):
+                entry.kind = .image
+                entry.thumbnail = image.preview
+                self?.indexText(entry, image: image.pixels)
+            case .icon(let image), .thumbnail(let image):
+                // A late lower-quality result must not replace a confirmed image.
+                guard !entry.isImage else { return }
+                entry.thumbnail = image
+            }
             self?.notifyChange()
         })
     }
 
-    private func indexText(_ entry: ClipboardEntry) {
+    private func indexText(_ entry: ClipboardEntry, image: CGImage? = nil) {
         guard entry.isImage || !entry.fileURLs.isEmpty else { return }
+        entry.searchGeneration &+= 1
+        let generation = entry.searchGeneration
         entry.searchIndex = .pending
-        searchIndexer.index(entry) { [weak self, weak entry] result in
-            guard let self, let entry, self.entries.contains(where: { $0.id == entry.id }) else { return }
+        searchIndexer.index(entry, image: image) { [weak self, weak entry] result in
+            guard let self, let entry, entry.searchGeneration == generation,
+                  self.entries.contains(where: { $0.id == entry.id }) else { return }
             entry.searchIndex = result
             self.notifyChange()
         }

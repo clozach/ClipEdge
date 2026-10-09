@@ -18,11 +18,11 @@ enum ClipboardSummary {
            let url = URL(string: fileURLString) {
             let count = fileURLStrings.count
             let detail = count > 1 ? "\(count) files" : url.deletingLastPathComponent().path
-            if count == 1, let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image),
-               let image = NSImage(contentsOf: url) {
-                return (url.lastPathComponent, detail, .image, image)
-            }
-            return (url.lastPathComponent, detail, .file, NSWorkspace.shared.icon(forFile: url.path))
+            // Resolving a cloud or disconnected-volume file can block. Start with
+            // a type icon without touching its path; the inspector confirms images
+            // and obtains the real preview off the main thread.
+            let type = UTType(filenameExtension: url.pathExtension) ?? .data
+            return (url.lastPathComponent, detail, .file, NSWorkspace.shared.icon(for: type))
         }
 
         if let image = values.lazy.compactMap({ value -> NSImage? in
