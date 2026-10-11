@@ -22,13 +22,13 @@ xcrun swiftc -swift-version 5 PasteMonitor.swift tests/PasteDeliveryTests.swift 
 .build/paste-tests
 xcrun swiftc -swift-version 5 CommandClickPaste.swift ClickPasteTarget.swift tests/ClickPasteTests.swift -o .build/click-tests -framework AppKit
 .build/click-tests
-xcrun swiftc -swift-version 5 ClipboardEntry.swift ClipboardMetadata.swift ClipboardColor.swift ClipboardIcons.swift ClipboardTileTooltip.swift ClipboardTile.swift ClipboardCanvas.swift ClipboardBrowserView.swift ClipboardRecall.swift tests/BrowserTests.swift -o .build/browser-tests -framework AppKit -framework QuartzCore
+xcrun swiftc -swift-version 5 ClipboardEntry.swift ClipboardMetadata.swift ClipboardSummary.swift ClipboardFigmaCopy.swift ClipboardHTMLText.swift ClipboardWebCopies.swift ClipboardColor.swift ClipboardIcons.swift ClipboardSurface.swift ClipboardTileTooltip.swift ClipboardTile.swift ClipboardCanvas.swift ClipboardBrowserView.swift tests/BrowserTests.swift -o .build/browser-tests -framework AppKit -framework QuartzCore
 .build/browser-tests
 xcrun swiftc -swift-version 5 ClipboardShortcut.swift ClipboardShortcutRecorder.swift ClipboardHotKey.swift tests/HotKeyTests.swift -o .build/hotkey-tests -framework AppKit -framework Carbon
 .build/hotkey-tests
 xcrun swiftc -swift-version 5 ClipboardTabGeometry.swift ClipboardTabView.swift ClipboardGlassView.swift tests/TabShapeTests.swift -o .build/tab-shape-tests -framework AppKit
 .build/tab-shape-tests
-xcrun swiftc -swift-version 5 ClipboardEntry.swift ClipboardMetadata.swift tests/MetadataTests.swift -o .build/metadata-tests -framework AppKit
+xcrun swiftc -swift-version 5 ClipboardEntry.swift ClipboardMetadata.swift ClipboardSummary.swift ClipboardFigmaCopy.swift ClipboardHTMLText.swift ClipboardWebCopies.swift tests/MetadataTests.swift -o .build/metadata-tests -framework AppKit
 .build/metadata-tests
 xcrun swiftc -swift-version 5 "${sources[@]}" tests/HistoryTests.swift -o .build/history-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
 .build/history-tests
@@ -41,6 +41,10 @@ grep -E '^(Skipped|Update file tests passed)' .build/update-file-tests.log
 
 xcrun swiftc -swift-version 5 "${sources[@]}" tests/ColorTests.swift -o .build/color-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
 .build/color-tests
+xcrun swiftc -swift-version 5 "${sources[@]}" tests/AppearanceTests.swift -o .build/appearance-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon
+.build/appearance-tests
+xcrun swiftc -swift-version 5 "${sources[@]}" tests/WebCopyTests.swift -o .build/web-copy-tests -framework AppKit -framework Vision -framework QuickLookUI -framework Carbon -framework PDFKit
+.build/web-copy-tests
 
 xcrun swiftc -swift-version 5 PublishModel.swift PublishProtocol.swift PublishProgress.swift PublishProcess.swift PublishReview.swift PublishController.swift tests/PublishTests.swift -o .build/publish-tests -framework AppKit
 .build/publish-tests

@@ -2,7 +2,7 @@ import AppKit
 import QuickLookUI
 
 /// Quick Look content shared by medium cursor and large drawer magnets.
-final class ClipboardCarouselView: NSView {
+final class ClipboardCarouselView: ClipboardSurfaceView {
     private let swatch = ClipboardSwatchView(frame: .zero)
     private let preview = QLPreviewView(frame: .zero, style: .normal)!
     private let previous = NSButton(title: "←", target: nil, action: nil)
@@ -20,11 +20,7 @@ final class ClipboardCarouselView: NSView {
 
     init(entry: ClipboardEntry, urls: [URL], position index: Int, count: Int) {
         super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 340))
-        wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        layer?.borderWidth = 1; layer?.borderColor = NSColor.separatorColor.cgColor
+        surface = .card(radius: 12, clips: true)
         preview.autostarts = false
         stamp.font = .systemFont(ofSize: 11)
         stamp.textColor = .secondaryLabelColor
@@ -51,7 +47,7 @@ final class ClipboardCarouselView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func update(entry: ClipboardEntry, urls: [URL], position index: Int, count: Int) {
         swatch.color = entry.swatchColor
-        swatch.setAccessibilityLabel(entry.plainText)
+        swatch.setAccessibilityLabel(entry.readableText)
         preview.isHidden = swatch.color != nil
         stamp.stringValue = entry.dateTimeStamp
         stamp.toolTip = entry.fullDateTimeStamp

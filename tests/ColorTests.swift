@@ -39,6 +39,18 @@ import AppKit
         let ordinary = ClipboardEntry(fingerprint: "text", capturedAt: Date(), payloads: [ClipboardPayload(values: [(.string, Data("ordinary".utf8))])], title: "ordinary", detail: "", kind: .text, thumbnail: nil)
         card.show(ordinary)
         expect(swatch.isHidden, "ordinary text clears color")
+        func captured(_ values: ClipboardWebCopies.Values) -> ClipboardEntry {
+            let summary = ClipboardSummary.make(from: [ClipboardPayload(values: values)])
+            return ClipboardEntry(fingerprint: UUID().uuidString, capturedAt: Date(), payloads: [ClipboardPayload(values: values)],
+                                  title: summary.title, detail: summary.detail, kind: summary.kind, thumbnail: summary.thumbnail)
+        }
+        let htmlColor = captured(ClipboardWebCopies.html("<span>#F6C0A6</span>"))
+        expect(htmlColor.swatchColor != nil && htmlColor.plainTextForPaste == "#F6C0A6", "an HTML-only color is a swatch and pastes as written")
+        card.show(htmlColor)
+        expect(!swatch.isHidden, "its card shows the swatch")
+        expect(captured(ClipboardWebCopies.rtf("#F6C0A6")).swatchColor != nil, "a rich-text color is a swatch")
+        expect(captured(ClipboardWebCopies.html("<p>Use #F6C0A6</p>")).swatchColor == nil, "HTML prose with a color stays prose")
+        expect(captured(ClipboardWebCopies.figma(text: "#F6C0A6")).swatchColor == nil, "Figma layers are never a swatch, not even Figma text: their card keeps what Figma said")
         print("Color tests passed: \(checks) assertions")
     }
 }

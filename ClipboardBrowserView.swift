@@ -8,7 +8,13 @@ enum ClipboardBrowserTab: Int, CaseIterable {
         switch self {
         case .all: return true
         case .images: return entry.isImage
-        case .text: return entry.kind == .text || entry.kind == .link || (entry.kind == .other && entry.plainText != nil)
+        case .text:
+            // Figma layers are text only when they carry it; their link alone is a way to paste them, so they stay under All.
+            switch entry.kind {
+            case .text, .link, .html: return true
+            case .figma(let copy): return copy.carriedText != nil
+            default: return false
+            }
         }
     }
     /// One filter for the drawer and the history window: this tab's entries
@@ -229,11 +235,11 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
     }
     func reveal(_ id: UUID) { canvas.choose(id) }
 
-    /// Reopens on a remembered tab and search, choosing its entry if still shown.
-    func restore(_ recall: ClipboardRecall) {
-        tabs.selectedSegment = recall.tab.rawValue
-        search.stringValue = recall.search
+    /// Each opening starts here: the tab already shown, an empty search and its
+    /// newest entry chosen, so a search left from before never hides a new copy.
+    func startFresh() {
+        search.stringValue = ""
         filterChanged()
-        if canvas.tiles.contains(where: { $0.entry.id == recall.entryID }) { canvas.choose(recall.entryID) }
+        if let newest = canvas.tiles.first { canvas.choose(newest.entry.id) }
     }
 }

@@ -2,7 +2,7 @@ import AppKit
 
 /// The ⌥⌘\ window's content: search and tabs above a compact list beside one
 /// card, with the available actions and their keys along the bottom.
-final class ClipboardHistoryView: NSView {
+final class ClipboardHistoryView: ClipboardSurfaceView {
     let search = NSSearchField()
     let tabs = NSSegmentedControl(labels: ["All ⌘1", "Images ⌘2", "Text ⌘3"], trackingMode: .selectOne, target: nil, action: nil)
     let deleteAll = NSButton(title: "Delete all ⇧⌘⌫", target: nil, action: nil)
@@ -33,12 +33,7 @@ final class ClipboardHistoryView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 12
-        layer?.masksToBounds = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        surface = .card(radius: 12, clips: true)
         search.placeholderString = "Type to search clipboard and image text"
         search.setAccessibilityLabel("Search clipboard and image text")
         search.sendsSearchStringImmediately = true

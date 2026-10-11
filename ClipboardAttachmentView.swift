@@ -70,16 +70,19 @@ enum ClipboardAttachmentView {
             let size = NSSize(width: side, height: side)
             let swatch = ClipboardSwatchView(frame: NSRect(origin: .zero, size: size))
             swatch.color = color
-            swatch.setAccessibilityLabel(entry.plainText)
+            swatch.setAccessibilityLabel(entry.readableText)
             return (swatch, size)
         }
         switch entry.kind {
         case .image:
             return makeImagePreview(entry.thumbnail, maximumSize: maximumSize)
         case .file:
-            return makeFilePreview(entry, maximumSize: maximumSize)
-        case .text, .link:
-            return makeTextPreview(rawText(for: entry) ?? entry.title, maximumSize: maximumSize)
+            return makeCardPreview(image: entry.thumbnail, title: entry.title, maximumSize: maximumSize)
+        case .figma(let copy):
+            let symbol = NSImage(systemSymbolName: entry.kind.iconName, accessibilityDescription: nil)
+            return makeCardPreview(image: symbol, title: copy.title, notes: [copy.explanation, copy.shortNote], maximumSize: maximumSize)
+        case .text, .link, .html:
+            return makeTextPreview(entry.readableText ?? entry.title, maximumSize: maximumSize)
         case .other:
             return makeSymbolPreview(name: entry.kind.iconName)
         }
@@ -102,6 +105,8 @@ enum ClipboardAttachmentView {
         label.textColor = .labelColor
         label.maximumNumberOfLines = 6
         label.lineBreakMode = .byWordWrapping
+        // Text cut short by the lines or the frame ends with "…", never looking complete.
+        label.cell?.truncatesLastVisibleLine = true
         label.cell?.wraps = true
         label.cell?.usesSingleLineMode = false
         label.preferredMaxLayoutWidth = availableWidth
@@ -139,24 +144,64 @@ enum ClipboardAttachmentView {
         return (container, size)
     }
 
-    private static func makeFilePreview(_ entry: ClipboardEntry, maximumSize: NSSize) -> (view: NSView, size: NSSize) {
-        let size = NSSize(width: min(210, maximumSize.width), height: min(106, maximumSize.height))
-        // With facts and a path beneath, the name keeps one line and the picture shrinks.
-        let isShort = size.height < 100
-        let side: CGFloat = isShort ? max(24, size.height - 40) : 48
-        let container = magnetContainer(size: size)
-        let imageView = NSImageView(image: entry.thumbnail ?? NSImage())
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-
-        let label = NSTextField(wrappingLabelWithString: entry.title)
+    /// A picture over a name: a Finder item's icon, or a symbol over a title and
+    /// a note (Figma layers). Without notes it keeps a Finder item's size. With
+    /// them it shows the first that fits whole, the symbol shrinking or giving
+    /// way before a note is cut short.
+    private static func makeCardPreview(image: NSImage?, title: String, notes: [String] = [], maximumSize: NSSize) -> (view: NSView, size: NSSize) {
+        let width = min(notes.isEmpty ? 210 : 240, maximumSize.width)
+        let label = NSTextField(wrappingLabelWithString: title)
         label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .labelColor
-        label.lineBreakMode = isShort ? .byTruncatingMiddle : .byWordWrapping
-        label.maximumNumberOfLines = isShort ? 1 : 2
-        label.preferredMaxLayoutWidth = size.width - 20
         label.alignment = .center
         label.translatesAutoresizingMaskIntoConstraints = false
+        let detail = notes.first.map { note -> NSTextField in
+            let detail = NSTextField(wrappingLabelWithString: note)
+            detail.font = .systemFont(ofSize: 10)
+            detail.textColor = .secondaryLabelColor
+            detail.alignment = .center
+            detail.cell?.truncatesLastVisibleLine = true
+            detail.preferredMaxLayoutWidth = width - 20
+            detail.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+            detail.translatesAutoresizingMaskIntoConstraints = false
+            return detail
+        }
+        // Measured by the labels' own cells, which wrap a little inside their frames.
+        func height(_ field: NSTextField, lines: CGFloat) -> CGFloat {
+            let line = ceil((field.font ?? .systemFont(ofSize: 12)).boundingRectForFont.height)
+            return min(ceil(field.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width - 20, height: 10_000)).height ?? line), line * lines)
+        }
+        var side: CGFloat
+        let size: NSSize
+        if let detail {
+            let fixed = 8 + height(label, lines: 2) + 4 + 8
+            let fitting = notes.first { note in detail.stringValue = note; return fixed + height(detail, lines: 6) <= maximumSize.height } ?? notes[notes.count - 1]
+            detail.stringValue = fitting
+            let words = fixed + height(detail, lines: 6)
+            let room = maximumSize.height - words - 5
+            side = room >= 16 ? min(26, room) : 0
+            size = NSSize(width: width, height: min(words + (side > 0 ? side + 5 : 0), maximumSize.height))
+        } else {
+            size = NSSize(width: width, height: min(106, maximumSize.height))
+            // With facts and a path beneath, the name keeps one line and the picture shrinks.
+            side = size.height < 100 ? max(24, size.height - 40) : 48
+        }
+        let isShort = notes.isEmpty && size.height < 100
+        label.lineBreakMode = isShort ? .byTruncatingMiddle : .byWordWrapping
+        label.maximumNumberOfLines = isShort ? 1 : 2
+        // A name cut at two lines ends with "…", so a shortened file name never looks whole.
+        label.cell?.truncatesLastVisibleLine = true
+        label.preferredMaxLayoutWidth = size.width - 20
+        let container = magnetContainer(size: size)
+        let imageView = NSImageView(image: image ?? NSImage())
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        // A symbol is a template: tinted here, in the magnet's own appearance.
+        if image?.isTemplate == true {
+            imageView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: side * 0.8, weight: .regular)
+            imageView.contentTintColor = .controlAccentColor
+        }
+        imageView.isHidden = side == 0
+        imageView.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(imageView)
         container.addSubview(label)
@@ -167,9 +212,18 @@ enum ClipboardAttachmentView {
             imageView.heightAnchor.constraint(equalToConstant: side),
             label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
             label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 5),
+            label.topAnchor.constraint(equalTo: side > 0 ? imageView.bottomAnchor : container.topAnchor, constant: side > 0 ? 5 : 8),
             label.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -8)
         ])
+        if let detail {
+            container.addSubview(detail)
+            NSLayoutConstraint.activate([
+                detail.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+                detail.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+                detail.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 4),
+                detail.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -8)
+            ])
+        }
         return (container, size)
     }
 
@@ -212,22 +266,8 @@ enum ClipboardAttachmentView {
     }
 
     private static func magnetContainer(size: NSSize) -> NSView {
-        let view = NSView(frame: NSRect(origin: .zero, size: size))
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 11
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.96).cgColor
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
+        let view = ClipboardSurfaceView(frame: NSRect(origin: .zero, size: size))
+        view.surface = .card(radius: 11, opacity: 0.96)
         return view
-    }
-
-    private static func rawText(for entry: ClipboardEntry) -> String? {
-        for payload in entry.payloads {
-            if let value = payload.values.first(where: { $0.type == .string }),
-               let string = String(data: value.data, encoding: .utf8) {
-                return string
-            }
-        }
-        return nil
     }
 }

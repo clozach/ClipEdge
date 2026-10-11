@@ -95,12 +95,29 @@ import AppKit
         check(ClipboardBrowserView.promotedEntry(from: ids, to: [b.id, c.id]) == nil, "filtering does not animate as promotion")
         check(ClipboardBrowserView.promotedEntry(from: ids, to: [c.id, b.id, a.id]) == nil, "unrelated reorder does not animate as promotion")
         check(browser.tabs.segmentCount == 3 && (0..<3).map { browser.tabs.label(forSegment: $0)! } == ["All", "Images", "Text"], "Text follows Images")
-        let link = entry("https://example.com", kind: .link), file = entry("file path", kind: .file), other = entry("opaque", kind: .other)
-        let opaque = ClipboardEntry(fingerprint: "opaque", capturedAt: Date(), payloads: [], title: "Opaque", detail: "", kind: .other, thumbnail: nil)
-        let rtf = ClipboardEntry(fingerprint: "rtf", capturedAt: Date(), payloads: [ClipboardPayload(values: [(.rtf, Data("{\\rtf1\\ansi Rich note}".utf8))])], title: "Clipboard item", detail: "", kind: .other, thumbnail: nil)
+        // Built as captured, so the kind is the one ClipboardSummary decides.
+        func captured(_ values: ClipboardWebCopies.Values) -> ClipboardEntry {
+            let summary = ClipboardSummary.make(from: [ClipboardPayload(values: values)])
+            return ClipboardEntry(fingerprint: UUID().uuidString, capturedAt: Date(), payloads: [ClipboardPayload(values: values)],
+                                  title: summary.title, detail: summary.detail, kind: summary.kind, thumbnail: summary.thumbnail)
+        }
+        let link = entry("https://example.com", kind: .link), file = entry("file path", kind: .file)
+        let opaque = captured([(NSPasteboard.PasteboardType("com.example.opaque"), Data([1]))])
+        let rtf = captured(ClipboardWebCopies.rtf("Rich note"))
+        let page = captured(ClipboardWebCopies.html(ClipboardWebCopies.plainHTML)), layers = captured(ClipboardWebCopies.figma())
+        check(rtf.kind == .text && rtf.title == "Rich note", "rich text alone is text, titled by its words")
         browser.tabs.selectedSegment = 2
-        browser.update(entries: [a, b, link, file, other, opaque, rtf], attachedID: nil)
-        check(browser.visibleEntries.map(\.id) == [a, link, other, rtf].map(\.id), "Text includes text/link/RTF; excludes images and files even with text payloads")
+        browser.update(entries: [a, b, link, file, opaque, rtf, page, layers], attachedID: nil)
+        check(browser.visibleEntries.map(\.id) == [a, link, rtf, page].map(\.id), "Text includes text/link/RTF/HTML-only; excludes images, files, unknown items and Figma layers")
+        browser.tabs.selectedSegment = 0
+        browser.update(entries: [a, b, link, file, opaque, rtf, page, layers], attachedID: nil)
+        check(browser.visibleEntries.count == 8, "All lists everything, Figma layers included")
+        browser.search.stringValue = "Fixture Board"
+        browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        check(browser.visibleEntries.map(\.id) == [layers.id], "search finds Figma layers by their file's name")
+        browser.search.stringValue = ""
+        browser.tabs.selectedSegment = 2
+        browser.update(entries: [a, b, link, file, opaque, rtf, page, layers], attachedID: nil)
         check(browser.columns == 1 && browser.zoom.isHidden && browser.canvas.tiles.allSatisfy { !$0.imageOnly }, "Text uses summary rows without image zoom")
         browser.search.stringValue = "Rich"
         browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))

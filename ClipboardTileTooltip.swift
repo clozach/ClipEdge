@@ -37,10 +37,8 @@ final class ClipboardTileTooltip {
     }
 
     static func content(for text: String, details: String = "") -> NSView {
-        let view = NSView()
-        view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        view.layer?.cornerRadius = 8
+        let view = ClipboardSurfaceView()
+        view.surface = ClipboardSurface(fill: .init(color: .windowBackgroundColor), radius: 8)
         let summary = NSTextField(wrappingLabelWithString: String(text.prefix(700)))
         summary.maximumNumberOfLines = 5
         summary.font = .systemFont(ofSize: 11)

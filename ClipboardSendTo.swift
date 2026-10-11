@@ -29,14 +29,18 @@ enum ClipboardSendTo {
         var pasteTarget: (pid_t) -> ClipboardPaster.Target? = { NSRunningApplication(processIdentifier: $0).map(ClipboardPaster.target(for:)) }
     }
 
-    /// What an app would open: Finder files, a web link, or a derived picture.
-    /// Plain text has none, so it can only be pasted.
+    /// What an app would open: Finder files, a web link, a derived picture, or
+    /// the link back to Figma layers. Text has none, so it can only be pasted;
+    /// clipboard HTML is never handed to a browser, only an address it reads as.
     static func openItems(for entry: ClipboardEntry, materializer: ClipboardMaterializer) -> [URL] {
         if !entry.fileURLs.isEmpty { return entry.fileURLs }
         switch entry.kind {
         case .link:
             return entry.plainText.flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }.map { [$0] } ?? []
         case .image: return (try? materializer.urls(for: entry)) ?? []
+        case .figma(let copy): return [copy.link]
+        // Only an address an HTML-only copy reads as, never the HTML itself.
+        case .html(let html): return html.address.map { [$0] } ?? []
         case .text, .file, .other: return []
         }
     }

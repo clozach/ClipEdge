@@ -17,8 +17,15 @@ final class ClipboardTile: NSControl {
     var isAttached: Bool { (superview as? ClipboardCanvas)?.liftedID == entry.id }
     /// A second ⌘⌫ deletes this row for good; anything else keeps it.
     var isArmed: Bool { (superview as? ClipboardCanvas)?.armedID == entry.id }
-    var tooltipSummary: String { entry.plainText ?? entry.title }
-    var tooltipDetails: String { (entry.metadata.lines + [entry.fullDateTimeStamp]).joined(separator: "\n") }
+    var tooltipSummary: String {
+        if case .figma(let copy) = entry.kind { return copy.summary }
+        return entry.readableText ?? entry.title
+    }
+    /// Facts, paths and the date wrap in full; a Figma link leads them, never cut short.
+    var tooltipDetails: String {
+        let link: [String] = { if case .figma(let copy) = entry.kind { return [copy.link.absoluteString] }; return [] }()
+        return (link + entry.metadata.lines + [entry.fullDateTimeStamp]).joined(separator: "\n")
+    }
     var tooltipText: String { "\(tooltipSummary)\n\(tooltipDetails)" }
     private var tracking: NSTrackingArea?
     private let deleteButton = NSButton()
@@ -125,7 +132,7 @@ final class ClipboardTile: NSControl {
             drawText(entry.edgeText, in: NSRect(x: stampRect.minX + 4, y: stampRect.minY + 19, width: stampRect.width - 8, height: 14), size: 10, color: .secondaryLabelColor)
         case .row:
             let iconRect = NSRect(x: 11, y: 14, width: 46, height: 46)
-            let image = entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName)
+            let image = entry.thumbnail ?? ClipboardIcons.drawn(entry.kind.iconName)
             if let color = entry.swatchColor { color.setFill(); NSBezierPath(ovalIn: iconRect).fill() }
             else if let image { drawImage(image, in: iconRect) }
             drawText(entry.title, in: NSRect(x: 68, y: 10, width: bounds.width - 106, height: 34), size: 13, color: .labelColor)
@@ -144,7 +151,7 @@ final class ClipboardTile: NSControl {
             }
             let iconRect = NSRect(x: 9, y: 7, width: 32, height: 32)
             if let color = entry.swatchColor { color.setFill(); NSBezierPath(ovalIn: iconRect).fill() }
-            else if let image = entry.thumbnail ?? ClipboardIcons.symbol(entry.kind.iconName) {
+            else if let image = entry.thumbnail ?? ClipboardIcons.drawn(entry.kind.iconName) {
                 drawImage(image, in: iconRect)
             }
             drawText(entry.title, in: textRect, size: 13, color: .labelColor)

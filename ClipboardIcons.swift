@@ -21,9 +21,16 @@ enum ClipboardIcons {
     }
     static let previous = chevron(left: true)
     static let next = chevron(left: false)
-    static func symbol(_ name: String, description: String? = nil) -> NSImage? {
+    /// A template, which buttons and image views tint for their appearance.
+    static func symbol(_ name: String, description: String? = nil, pointSize: CGFloat = 16) -> NSImage? {
         NSImage(systemSymbolName: name, accessibilityDescription: description)?
-            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: .regular))
+    }
+    /// For a symbol drawn in draw(_:), where a template comes out black. Its
+    /// color resolves when drawn, in the drawing view's appearance.
+    static func drawn(_ name: String, color: NSColor = .secondaryLabelColor) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 16, weight: .regular).applying(.init(hierarchicalColor: color)))
     }
     private static func chevron(left: Bool) -> NSImage {
         glyph { path in

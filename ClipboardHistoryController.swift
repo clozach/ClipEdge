@@ -18,7 +18,6 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     var pickupMagnet: () -> Bool = { true }
     private let store: ClipboardStore
     private let paster: ClipboardPaster
-    private let recall: ClipboardRecallMemory
     private let materializer: ClipboardMaterializer
     private let panel: NSPanel
     /// Only one thing can be waiting for its second delete press.
@@ -37,11 +36,9 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     var frame: NSRect { panel.frame }
     var holdsKeyboard: Bool { isVisible && panel.isKeyWindow }
 
-    init(store: ClipboardStore, paster: ClipboardPaster, previewService: ClipboardPreviewService,
-         recall: ClipboardRecallMemory = ClipboardRecallMemory(minutes: { 0 }), panel suppliedPanel: NSPanel? = nil) {
+    init(store: ClipboardStore, paster: ClipboardPaster, previewService: ClipboardPreviewService, panel suppliedPanel: NSPanel? = nil) {
         self.store = store
         self.paster = paster
-        self.recall = recall
         materializer = previewService.materializer
         openInPreview = previewService.openInPreview
         panel = suppliedPanel ?? ClipboardWindow(contentRect: NSRect(origin: .zero, size: Self.preferredSize),
@@ -82,25 +79,24 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
         }
     }
 
-    /// Each opening starts from All, an empty search and the newest entry, or,
-    /// within the Reopen setting, from the last use: its tab and search, selected
-    /// so typing replaces it, with that entry chosen.
+    /// Each opening starts from All, an empty search and the newest entry, so
+    /// a search left from before never hides what was just copied.
     func show() {
         onShow?()
         store.cancelStaging()
         returnTarget = prepare()
-        let recalled = recall.recall()
-        view.search.stringValue = recalled?.search ?? ""
-        view.tabs.selectedSegment = (recalled?.tab ?? .all).rawValue
+        view.search.stringValue = ""
+        // Typing from before the close would undo against the cleared text and throw.
+        panel.undoManager?.removeAllActions()
+        view.tabs.selectedSegment = ClipboardBrowserTab.all.rawValue
         mode = .browsing(.none)
         view.showCard()
         refreshFooter()
         reload(selectFirst: true)
-        if let id = recalled?.entryID, view.canvas.tiles.contains(where: { $0.entry.id == id }) { view.canvas.choose(id) }
         let screen = NSScreen.main ?? NSScreen.screens[0]
         panel.setFrame(Self.frame(in: screen.visibleFrame), display: true)
         panel.makeKeyAndOrderFront(nil)
-        focusSearch(selectingAll: recalled != nil)
+        focusSearch()
     }
 
     /// The keyboard goes back to the app in front: see ClipboardWindow.orderOutReturningKeyboard.
@@ -239,22 +235,17 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
         else { close() }
     }
 
-    /// Returning to the field leaves the caret at the end; only a search the
-    /// window offered back is selected, so the next letter replaces it.
+    /// Returning to the field leaves the caret at the end; ⌘F selects the
+    /// search, so the next letter replaces it.
     private func focusSearch(selectingAll: Bool = false) {
         panel.makeFirstResponder(view.search)
         let length = view.search.stringValue.utf16.count
         view.search.currentEditor()?.selectedRange = selectingAll ? NSRange(location: 0, length: length) : NSRange(location: length, length: 0)
     }
 
-    private func remember(_ entry: ClipboardEntry) {
-        recall.remember(entry, tab: view.currentTab, query: view.search.stringValue)
-    }
-
     // MARK: Actions
 
     private func paste(_ entry: ClipboardEntry, plain: Bool) {
-        remember(entry)
         let target = returnTarget
         close()
         paster.paste(entry, into: target, plain: plain)
@@ -264,13 +255,11 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
     /// cursor magnet. Pasting moves it to the top; Esc restores the clipboard.
     /// With window magnets off it just becomes the clipboard's current item.
     private func pickUp(_ entry: ClipboardEntry) {
-        remember(entry)
         close()
         if pickupMagnet() { store.selectForPaste(entry, from: .window) } else { store.makeCurrent(entry) }
     }
 
     private func open(_ entry: ClipboardEntry) {
-        remember(entry)
         close()
         openInPreview(entry) { [weak self] error in if let error { self?.onError?(error) } }
     }
@@ -295,7 +284,6 @@ final class ClipboardHistoryController: NSObject, NSSearchFieldDelegate {
 
     private func send(to target: ClipboardSendTarget) {
         guard case .sending(let entry) = mode else { return }
-        remember(entry)
         close()
         ClipboardSendTo.send(entry, to: target, paster: paster, sources: sendSources) { [weak self] error in self?.onError?(error) }
     }

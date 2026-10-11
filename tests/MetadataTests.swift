@@ -80,6 +80,30 @@ import AppKit
         check(file.metadata == ClipboardMetadata(paths: [pictureURL.path]) && file.plainTextForPaste == pictureURL.path, "a Finder item starts with its path before the disk is read")
         let opaque = entry([(NSPasteboard.PasteboardType("com.example.opaque"), Data([9]))], kind: .other, detail: "com.example.opaque")
         check(opaque.metadata.isEmpty && opaque.edgeText == "com.example.opaque", "an unknown flavor keeps its summary detail")
+
+        // Copies from web pages, recognized as captured.
+        func captured(_ values: ClipboardWebCopies.Values) -> ClipboardEntry {
+            let summary = ClipboardSummary.make(from: [ClipboardPayload(values: values)])
+            return entry(values.map { ($0.type, $0.data) }, kind: summary.kind, detail: summary.detail)
+        }
+        let layers = captured(ClipboardWebCopies.figma())
+        check(layers.metadata.facts == ["Figma Design", "figma.com"] && layers.edgeText == "Figma Design · figma.com", "Figma layers: editor and site, not type names")
+        check(layers.plainTextForPaste == "https://www.figma.com/design/\(ClipboardWebCopies.fileKey)/ClipEdge-Fixture-Board?node-id=1-2",
+              "Figma layers paste their link as plain text, share token dropped and layer kept")
+        check(!layers.metadata.pasteText.contains("figma.com/design"), "the link is the paste, not one of the facts")
+        let page = captured(ClipboardWebCopies.html(ClipboardWebCopies.plainHTML))
+        check(page.metadata.facts == ["5 words", "33 characters"] && page.plainTextForPaste == "ClipEdge fixture & HTML-only copy", "an HTML-only copy counts and pastes its words")
+        let chat = captured(ClipboardWebCopies.chatReply)
+        check(chat.metadata.site == "claude.ai" && chat.edgeText.hasSuffix("· from claude.ai"), "a copy from a web page names the site")
+        check(!chat.metadata.pasteText.contains("claude.ai") && ClipboardMetadata(site: "claude.ai").pasteText.isEmpty && !ClipboardMetadata(site: "claude.ai").isEmpty,
+              "the site shows along the edge but is never pasted")
+        let caption = captured(ClipboardWebCopies.figma(text: "Fixture caption"))
+        check(caption.metadata.facts == ["Figma text from ClipEdge Fixture Board", "Figma Design", "figma.com"] && caption.plainTextForPaste == "Fixture caption",
+              "Figma text: where it came from, then editor and site; it pastes its words")
+        let local = captured(ClipboardWebCopies.html("<p>local words</p>", source: "app://-/index.html"))
+        check(!local.metadata.line.contains("from"), "an app's own page names no site")
+        let rich = captured(ClipboardWebCopies.rtf("Rich only"))
+        check(rich.metadata.facts == ["2 words", "9 characters"] && rich.plainTextForPaste == "Rich only", "rich text alone counts and pastes its text")
         print("PASS: \(assertions) metadata assertions; temporary fixture files only")
     }
 }

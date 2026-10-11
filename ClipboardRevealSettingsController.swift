@@ -13,7 +13,6 @@ final class ClipboardRevealSettingsController: NSWindowController {
     private let recorder = ClipboardShortcutRecorder(frame: .zero)
     private let resetShortcut = NSButton(title: "Use Default", target: nil, action: nil)
     private let shortcutMessage = NSTextField(wrappingLabelWithString: "Click the shortcut to record a new combination.")
-    private let recallPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let magnetsBox = NSButton(checkboxWithTitle: "Show cursor magnets", target: nil, action: nil)
     private let sourceBoxes = ClipboardMagnetSource.allCases.map { NSButton(checkboxWithTitle: $0.title, target: nil, action: nil) }
     private let sourceStack = NSStackView()
@@ -108,15 +107,6 @@ final class ClipboardRevealSettingsController: NSWindowController {
         shortcutRow.distribution = .fillEqually
         shortcutMessage.font = explanation.font
         shortcutMessage.textColor = .secondaryLabelColor
-        let recallTitle = NSTextField(labelWithString: "Reopen on the last search")
-        recallTitle.font = title.font
-        recallPicker.addItems(withTitles: ClipboardRevealSettings.recallChoices.map(ClipboardRevealSettings.recallTitle))
-        recallPicker.target = self
-        recallPicker.action = #selector(changeRecall)
-        recallPicker.setAccessibilityLabel("Reopen on the last search")
-        let recallExplanation = NSTextField(wrappingLabelWithString: "After you paste, copy, open or send an item, the drawer and the ⌥⌘\\ window reopen on the search that found it, with the item selected. Typing replaces the search.")
-        recallExplanation.font = explanation.font
-        recallExplanation.textColor = .secondaryLabelColor
         let magnetsTitle = NSTextField(labelWithString: "Cursor magnets")
         magnetsTitle.font = title.font
         magnetsBox.target = self
@@ -137,7 +127,6 @@ final class ClipboardRevealSettingsController: NSWindowController {
         let stack = NSStackView(views: [title, modePicker, labelRow, delaySlider, explanation,
                                        closeTitle, closeRow, dismissalSlider, closeExplanation,
                                        shortcutTitle, shortcutRow, shortcutMessage,
-                                       recallTitle, recallPicker, recallExplanation,
                                        magnetsTitle, magnetsBox, sourceStack, magnetsExplanation])
         self.stack = stack
         stack.orientation = .vertical
@@ -146,11 +135,10 @@ final class ClipboardRevealSettingsController: NSWindowController {
         stack.setCustomSpacing(20, after: explanation)
         stack.setCustomSpacing(20, after: closeExplanation)
         stack.setCustomSpacing(20, after: shortcutMessage)
-        stack.setCustomSpacing(20, after: recallExplanation)
         stack.setCustomSpacing(6, after: magnetsBox)
         stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
-        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage, recallPicker, recallExplanation, magnetsExplanation] {
+        for view in [modePicker, labelRow, delaySlider, explanation, closeRow, dismissalSlider, closeExplanation, shortcutRow, shortcutMessage, magnetsExplanation] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         NSLayoutConstraint.activate([
@@ -168,8 +156,7 @@ final class ClipboardRevealSettingsController: NSWindowController {
         delaySlider.nextKeyView = dismissalSlider
         dismissalSlider.nextKeyView = recorder
         recorder.nextKeyView = resetShortcut
-        resetShortcut.nextKeyView = recallPicker
-        recallPicker.nextKeyView = magnetsBox
+        resetShortcut.nextKeyView = magnetsBox
     }
 
     private func refresh() {
@@ -183,7 +170,6 @@ final class ClipboardRevealSettingsController: NSWindowController {
         dismissalValue.stringValue = String(format: "%.2f seconds", settings.dismissalDelaySeconds)
         dismissalSlider.setAccessibilityValueDescription(dismissalValue.stringValue)
         recorder.shortcut = settings.quickLookShortcut
-        recallPicker.selectItem(at: ClipboardRevealSettings.recallChoices.firstIndex(of: settings.recallMinutes) ?? 0)
         magnetsBox.state = settings.magnetsEnabled ? .on : .off
         for (source, box) in zip(ClipboardMagnetSource.allCases, sourceBoxes) {
             box.state = settings.magnetSources.contains(source) ? .on : .off
@@ -229,8 +215,6 @@ final class ClipboardRevealSettingsController: NSWindowController {
         }
         window.setFrame(fitted, display: true)
     }
-
-    @objc private func changeRecall() { settings.recallMinutes = ClipboardRevealSettings.recallChoices[recallPicker.indexOfSelectedItem] }
 
     private func applyShortcut(_ shortcut: ClipboardShortcut) {
         let status = onShortcutChange?(shortcut) ?? noErr

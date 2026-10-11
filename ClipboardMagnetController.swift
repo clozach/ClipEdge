@@ -39,8 +39,10 @@ final class ClipboardMagnetController {
     private var previewSize = NSSize.zero
     private var motion: Motion?
     private var isHolding = false
-    /// What the small magnet was drawn from: late facts or a thumbnail redraw it.
-    private var smallContent: (id: UUID, metadata: ClipboardMetadata, thumbnail: NSImage?)?
+    /// What the small magnet was drawn from: late facts, a thumbnail or a new
+    /// appearance redraw it.
+    private var smallContent: (entry: ClipboardEntry, metadata: ClipboardMetadata, thumbnail: NSImage?)?
+    private var appearanceObservation: NSKeyValueObservation?
     // This is a rendered-pixel limit, including padding and the holding glyph.
     // Convert it to AppKit points using the display under the attachment.
     private var maximumAttachmentPixels: CGFloat { drawerAnchor != nil ? .greatestFiniteMagnitude : (isQuickLook ? 840 : 350) }
@@ -96,6 +98,11 @@ final class ClipboardMagnetController {
         commandClick.onFailure = { NSSound.beep() }
         previousKey.onPress = { [weak self] in self?.onNavigate?(-1) }
         nextKey.onPress = { [weak self] in self?.onNavigate?(1) }
+        // The small magnet is a snapshot, so it cannot follow the Mac into dark
+        // or light by itself. Redraw it once AppKit has passed the change on.
+        appearanceObservation = NSApplication.shared.observe(\.effectiveAppearance) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.redrawSmall() }
+        }
     }
 
     deinit {
@@ -128,13 +135,19 @@ final class ClipboardMagnetController {
 
     /// Disk facts and Quick Look thumbnails arrive after a copy has attached.
     func refreshSmall(_ entry: ClipboardEntry) {
-        guard presentation == .small, let shown = smallContent, shown.id == entry.id,
+        guard presentation == .small, let shown = smallContent, shown.entry.id == entry.id,
               shown.metadata != entry.metadata || shown.thumbnail !== entry.thumbnail else { return }
         installSmallPreview(for: entry)
     }
 
+    /// Only while it is held: a magnet on its way into a paste or back to its slot keeps its look.
+    private func redrawSmall() {
+        guard presentation == .small, isHolding, let shown = smallContent else { return }
+        installSmallPreview(for: shown.entry)
+    }
+
     private func installSmallPreview(for entry: ClipboardEntry) {
-        smallContent = (entry.id, entry.metadata, entry.thumbnail)
+        smallContent = (entry, entry.metadata, entry.thumbnail)
         let preview = ClipboardAttachmentView.makeHeldPreview(for: entry, maximumAttachmentPixels: maximumAttachmentPixels, holdingGlyphHeight: holdingGlyphHeight, shortcutHint: quickLookHint)
         previewSize = preview.size
         let visibleFrame = panel.frame
@@ -195,6 +208,7 @@ final class ClipboardMagnetController {
     func hide() {
         stopObservation()
         presentation = .hidden
+        smallContent = nil
         (panel.contentView as? ClipboardCarouselView)?.closePreview()
         panel.orderOut(nil)
     }

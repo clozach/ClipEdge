@@ -66,6 +66,22 @@ enum ClipboardDemoReport {
                 "sendToFrame": drawer.sendToPopover.isVisible ? NSStringFromRect(drawer.sendToPopover.frame) : "none"]
     }
 
+    /// Each surface ClipEdge paints itself: the appearance it has and how light its ground is
+    /// (sRGB luminance; -1 while it is not built or has no ground), so a check needs no pixels.
+    static func surfaces(history: ClipboardHistoryView, sendTo: ClipboardSendToView, in app: NSApplication) -> [String: Any] {
+        let content = app.windows.filter(\.isVisible).compactMap(\.contentView)
+        let views: [(String, NSView?)] = [("history", history), ("historyConfirmation", history.confirmation),
+            ("sendTo", sendTo), ("quickLook", content.first { $0 is ClipboardCarouselView }),
+            ("cardInfo", content.first { type(of: $0) == ClipboardSurfaceView.self })]
+        var report: [String: Any] = [:]
+        for (name, view) in views {
+            report[name + "Appearance"] = view.map { $0.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? "dark" : "light" } ?? "none"
+            let ground = view?.layer?.backgroundColor.flatMap { NSColor(cgColor: $0)?.usingColorSpace(.sRGB) }
+            report[name + "Ground"] = ground.map { 0.2126 * $0.redComponent + 0.7152 * $0.greenComponent + 0.0722 * $0.blueComponent } ?? -1
+        }
+        return report
+    }
+
     /// The first-launch question's window and the spots a real click can use. The icon makes the panel key without answering.
     static func consent(_ app: NSApplication) -> [String: Any] {
         guard let panel = app.windows.first(where: { $0 is UpdateConsentPanel && $0.isVisible }) else {

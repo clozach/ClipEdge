@@ -24,29 +24,46 @@ enum ClipboardDemo {
         for entry in store.entries { entry.capturedAt = Date(timeIntervalSince1970: 1790794800) }
         store.cancelStaging()
     }
+    /// --demo-web-copies: made-up browser copies (Figma layers, HTML-only and rich
+    /// text) on top of `seed`, whose order the tests and captures rely on.
+    static func seedWebCopies(_ store: ClipboardStore, board: NSPasteboard) {
+        let seeded = Set(store.entries.map(\.id))
+        for copy in ClipboardWebCopies.demo {
+            board.clearContents()
+            board.writeObjects([ClipboardWebCopies.item(copy.values)])
+            store.saveNow()
+        }
+        for (offset, entry) in store.entries.filter({ !seeded.contains($0.id) }).reversed().enumerated() {
+            entry.capturedAt = Date(timeIntervalSince1970: 1790794800 + Double(offset + 1) * 60)
+        }
+        store.cancelStaging()
+    }
     static func run() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
-        app.appearance = NSAppearance(named: .aqua)
+        // --demo-launch-appearance dark builds everything in dark, as a dark login does;
+        // --demo-appearance (below) switches once everything exists, as the Mac does later.
+        let launchesDark = CommandLine.arguments.firstIndex(of: "--demo-launch-appearance")
+            .map { CommandLine.arguments.indices.contains($0 + 1) && CommandLine.arguments[$0 + 1] == "dark" } ?? false
+        app.appearance = NSAppearance(named: launchesDark ? .darkAqua : .aqua)
         let usesSystemBoard = CommandLine.arguments.contains("--demo-system-clipboard")
         let lease = usesSystemBoard ? ClipboardFixtureLease() : nil
         let board = usesSystemBoard ? NSPasteboard.general : NSPasteboard.withUniqueName()
         let store = ClipboardStore(pasteboard: board)
         store.start()
         seed(store, board: board)
+        if CommandLine.arguments.contains("--demo-web-copies") { seedWebCopies(store, board: board) }
         lease?.register(store.entries)
         // The fixture board must never trigger a paste from the user's general board.
         let settings = ClipboardRevealSettings(defaults: nil)
         // A longer exit grace keeps the open drawer up while a check clicks just beside it (the setting allows up to 3 s).
         if let flag = CommandLine.arguments.firstIndex(of: "--demo-dismissal-delay"), CommandLine.arguments.indices.contains(flag + 1),
            let seconds = Double(CommandLine.arguments[flag + 1]) { settings.dismissalDelaySeconds = seconds }
-        let recall = ClipboardRecallMemory(minutes: { settings.recallMinutes })
         let controller = ClipboardDrawerController(store: store,
             magnetController: ClipboardMagnetController(commandClickEnabled: usesSystemBoard), defaults: nil,
             paster: ClipboardPaster(store: store, environment: usesSystemBoard ? .init() : .inert),
-            recall: recall, activate: { app.activate(ignoringOtherApps: true) })
-        let history = ClipboardHistoryController(store: store, paster: controller.paster,
-                                                 previewService: controller.previewService, recall: recall)
+            activate: { app.activate(ignoringOtherApps: true) })
+        let history = ClipboardHistoryController(store: store, paster: controller.paster, previewService: controller.previewService)
         history.prepare = { controller.hide(animated: false); return ClipboardPaster.frontmostTarget() }
         store.attachesCopiesToCursor = { settings.showsMagnet(for: .copy) }
         controller.pickupMagnet = { settings.showsMagnet(for: .drawer) }
@@ -111,6 +128,7 @@ enum ClipboardDemo {
             diagnostics["inputMonitoring"] = CGPreflightListenEventAccess()
             diagnostics.merge(ClipboardDemoReport.keyboard(app)) { $1 }
             diagnostics.merge(ClipboardDemoReport.drawer(controller, in: app)) { $1 }
+            diagnostics.merge(ClipboardDemoReport.surfaces(history: history.view, sendTo: controller.sendToPopover.view, in: app)) { $1 }
             diagnostics["keyTimeline"] = timeline?.events ?? []
             if let question {
                 diagnostics.merge(ClipboardDemoReport.consent(app)) { $1 }

@@ -2,9 +2,6 @@ import AppKit
 
 final class ClipboardDrawerController: NSObject {
     private let store: ClipboardStore
-    private let recall: ClipboardRecallMemory
-    /// When the drawer last closed: it keeps its own search, so only a later use replaces it.
-    private var closedAt: Date?
     private let panel: NSPanel
     let browser = ClipboardBrowserView()
     let header = ClipboardDrawerHeader()
@@ -50,10 +47,8 @@ final class ClipboardDrawerController: NSObject {
     init(store: ClipboardStore, magnetController: ClipboardMagnetController = ClipboardMagnetController(),
          panel suppliedPanel: NSPanel? = nil, defaults: UserDefaults? = .standard,
          paster: ClipboardPaster? = nil, sendToPopover: ClipboardSendToPopover = ClipboardSendToPopover(),
-         recall: ClipboardRecallMemory = ClipboardRecallMemory(minutes: { 0 }),
          activate: @escaping () -> Void = {}) {
         self.store = store
-        self.recall = recall
         self.magnetController = magnetController
         self.paster = paster ?? ClipboardPaster(store: store)
         self.sendToPopover = sendToPopover
@@ -107,7 +102,11 @@ final class ClipboardDrawerController: NSObject {
         if !expanded {
             previousApplication = NSWorkspace.shared.frontmostApplication
             if previousApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { previousApplication = nil }
-            if let recalled = recall.recall(usedAfter: closedAt) { browser.restore(recalled) }
+            // Cleared as it opens, not as it closes, so nothing moves while the drawer is open.
+            browser.startFresh()
+            // The search's typing from before the close would undo against the cleared text
+            // and throw; the drawer's own window holds it, as the collapsed browser has none.
+            panel.undoManager?.removeAllActions()
         }
         targetScreen = screen
         expanded = true
@@ -121,7 +120,6 @@ final class ClipboardDrawerController: NSObject {
     func hide(animated _: Bool) {
         guard expanded else { return }
         expanded = false
-        closedAt = recall.now()
         sendToPopover.close()
         ClipboardTileTooltip.shared.hide()
         panel.resignKey()
@@ -316,9 +314,7 @@ final class ClipboardDrawerController: NSObject {
             self.store.previewInCarousel(entry, among: self.browser.visibleEntries)
         }
         browser.onClear = { [weak self] in self?.confirmClear() }
-        browser.canvas.onPick = { [weak self] entry in
-            self?.resetPreviewCycle(); self?.remember(entry); self?.pick(entry)
-        }
+        browser.canvas.onPick = { [weak self] entry in self?.resetPreviewCycle(); self?.pick(entry) }
         browser.canvas.onPreview = { [weak self] entry in self?.togglePreview(entry) }
         browser.canvas.onDelete = { [weak self] entry in self?.confirmDelete(entry) }
         browser.canvas.onOpen = { [weak self] entry in self?.openInPreview(entry) }
@@ -368,7 +364,6 @@ final class ClipboardDrawerController: NSObject {
     }
 
     private func send(_ entry: ClipboardEntry, to target: ClipboardSendTarget) {
-        remember(entry)
         // Pasting into the app the drawer covered needs that app in front first.
         hide(animated: true)
         ClipboardSendTo.send(entry, to: target, paster: paster, sources: sendSources) { [weak self] error in self?.showError(error) }
@@ -463,12 +458,7 @@ final class ClipboardDrawerController: NSObject {
         if pickupMagnet() { store.selectForPaste(entry, from: .drawer) } else if store.makeCurrent(entry) { browser.reveal(entry.id) }
     }
 
-    private func remember(_ entry: ClipboardEntry) {
-        recall.remember(entry, tab: browser.currentTab, query: browser.search.stringValue)
-    }
-
     private func openInPreview(_ entry: ClipboardEntry) {
-        remember(entry)
         resetPreviewCycle()
         previewService.openInPreview(entry) { [weak self] error in if let error { self?.showError(error) } }
     }

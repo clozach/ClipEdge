@@ -102,49 +102,54 @@ import AppKit
         magnet.onCancel?()
         drawer.browser.onHover?(imageTiles[0].entry)
         check(store.stagedEntryID == nil, "Escape or close prevents later hover reactivation")
-        drawerRecallChecks()
-        print("PASS: \(assertions) drawer-preview geometry/hover/lifecycle/recall assertions; named board, no input injection")
+        drawerOpeningChecks()
+        searchUndoChecks()
+        print("PASS: \(assertions) drawer-preview geometry/hover/lifecycle/opening assertions; named board, no input injection")
     }
 
-    /// The drawer keeps its own search across reopening; a use made after it
-    /// last closed (in the ⌥⌘\ window, say) replaces it within the minutes.
-    private static func drawerRecallChecks() {
+    /// Every opening clears the drawer's search and chooses the newest entry in
+    /// the tab it had (Al, 2026-10-10: a search left from before hid what he had
+    /// just copied). Clearing happens as it opens, so nothing moves while it is open.
+    private static func drawerOpeningChecks() {
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
         let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
-        for text in ["Forest walk", "Ocean swim", "Sunset walk"] {
-            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow()
-        }
-        store.cancelStaging()
-        var clock = Date(timeIntervalSinceReferenceDate: 800_000_000)
-        let memory = ClipboardRecallMemory(minutes: { 5 }, now: { clock })
+        func copy(_ text: String) { board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging() }
+        ["Forest walk", "Ocean swim", "Sunset walk"].forEach(copy)
         let magnet = ClipboardMagnetController(panel: PreviewTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true),
                                                commandClickEnabled: false)
         let drawer = ClipboardDrawerController(store: store, magnetController: magnet,
                                                panel: PreviewTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true),
-                                               defaults: nil, recall: memory)
+                                               defaults: nil)
         defer { drawer.stop(); store.stop() }
-        let search = drawer.browser.search
+        let browser = drawer.browser, search = browser.search
+        func type(_ query: String) { search.stringValue = query; browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
         drawer.show(on: NSScreen.main!)
-        search.stringValue = "walk"; drawer.browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        browser.tabs.selectedSegment = ClipboardBrowserTab.text.rawValue
+        browser.tabs.sendAction(browser.tabs.action!, to: browser.tabs.target)
+        type("walk")
         let forest = store.entries.first { $0.title == "Forest walk" }!
-        drawer.browser.canvas.onPick?(forest)
+        browser.canvas.choose(forest.id)
+        check(browser.visibleEntries.map(\.title) == ["Sunset walk", "Forest walk"] && browser.canvas.selectedID == forest.id,
+              "a search narrows the open drawer and an older match can be chosen")
+        drawer.show(on: NSScreen.main!)
+        check(search.stringValue == "walk" && browser.canvas.selectedID == forest.id, "an open that never closed keeps the search and the choice")
+        browser.canvas.onPick?(forest)
         store.cancelStaging()
-        check(memory.last?.entryID == forest.id && memory.last?.query == "walk", "picking a tile remembers it and the drawer's search")
-        clock += 10; drawer.hide(animated: false)
-        search.stringValue = "ocean"; drawer.browser.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
-        clock += 10; drawer.show(on: NSScreen.main!)
-        check(search.stringValue == "ocean", "a use from before the drawer closed never replaces the search it kept")
-        clock += 10; drawer.hide(animated: false)
+        drawer.hide(animated: false)
+        copy("Harbor swim")
+        let harbor = store.entries[0]
+        drawer.show(on: NSScreen.main!)
+        check(search.stringValue.isEmpty && browser.currentTab == .text, "reopening clears the search and keeps the tab")
+        check(browser.visibleEntries.count == store.entries.filter { ClipboardBrowserTab.text.includes($0) }.count &&
+              browser.visibleEntries.first === harbor && browser.canvas.selectedID == harbor.id,
+              "the copy made while it was closed shows, newest and chosen")
+        browser.canvas.choose(forest.id)
+        drawer.hide(animated: false)
+        drawer.show(on: NSScreen.main!)
+        check(browser.canvas.selectedID == store.entries[0].id, "each opening chooses the newest entry, as the window does")
+
         let sunset = store.entries.first { $0.title == "Sunset walk" }!
-        clock += 10; memory.remember(sunset, tab: .text, query: "sunset")
-        clock += 10; drawer.show(on: NSScreen.main!)
-        check(search.stringValue == "sunset" && drawer.browser.currentTab == .text && drawer.browser.canvas.selected?.entry === sunset,
-              "a later use elsewhere reopens the drawer on its tab and search, entry chosen")
-        clock += 10; drawer.hide(animated: false)
-        clock += 600; memory.remember(forest, tab: .all, query: "forest")
-        clock += 301; drawer.show(on: NSScreen.main!)
-        check(search.stringValue == "sunset", "an expired use leaves the drawer as it was")
 
         // Settings › Cursor magnets › From the drawer.
         drawer.pickupMagnet = { false }
@@ -184,6 +189,39 @@ import AppKit
             store.cancelStaging()
         }
         drawer.pickupMagnet = { true }
+    }
+}
+
+extension DrawerPreviewTests {
+    /// Typing left in the search when the drawer closed is not undone against the next
+    /// opening's empty search, which threw NSRangeException. The real window class,
+    /// isolated, since its field editor shares the window's undo.
+    static func searchUndoChecks() {
+        let marker = "CLIPEDGE_TEST_PREVIEW_ROOT", previous = ProcessInfo.processInfo.environment[marker]
+        setenv(marker, FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-drawer-undo-\(UUID().uuidString)").path, 1)
+        defer { if let previous { setenv(marker, previous, 1) } else { unsetenv(marker) } }
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        for text in ["Forest walk", "Ocean swim"] { board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging() }
+        let drawer = ClipboardDrawerController(store: store, defaults: nil)
+        defer { drawer.stop(); store.stop(); board.releaseGlobally() }
+        let browser = drawer.browser
+        guard let panel = browser.window else { fatalError("FAIL: the drawer holds its browser") }
+        drawer.show(on: NSScreen.main!)
+        browser.focusSearch()
+        (panel.firstResponder as? NSTextView)?.insertText("walk", replacementRange: NSRange(location: NSNotFound, length: 0))
+        // Undo groups typing by run-loop pass; run one so the typing is a finished step.
+        RunLoop.current.add(Timer(timeInterval: 0.01, repeats: false) { _ in }, forMode: .default)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        check(browser.search.stringValue == "walk" && panel.undoManager?.canUndo == true, "typing in the drawer's search can be undone while it is open")
+        drawer.hide(animated: false)
+        drawer.show(on: NSScreen.main!)
+        browser.focusSearch()
+        check(browser.search.stringValue.isEmpty && panel.undoManager?.canUndo == false, "reopening leaves no undo that would bring back an old search")
+        let undo = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: 0, context: nil,
+                                    characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!
+        check(panel.performKeyEquivalent(with: undo) && browser.search.stringValue.isEmpty, "⌘Z then leaves the empty search as it is")
+        drawer.hide(animated: false)
     }
 }
 

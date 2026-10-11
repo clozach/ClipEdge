@@ -70,6 +70,7 @@ import AppKit
         verifySearchGeneration(root, icon: icon, fullPreview: fullPreview, fullPixels: fullPixels)
         verifyRemovedCallbacks(root, icon: icon, fullPreview: fullPreview, fullPixels: fullPixels)
         verifyReplacedCallbacks(root, icon: icon, fullPreview: fullPreview, fullPixels: fullPixels)
+        verifyWebCopyOrder(root, png: png)
         print("PASS: \(assertions) asynchronous file-inspection assertions; named pasteboards and temporary fixtures only")
     }
 
@@ -250,6 +251,38 @@ import AppKit
         check(facts?.paths == urls.map(\.path), "multiple-file metadata retains every path")
         check(calls.read { $0.icons == [urls[0]] && $0.fullImages == 0 && $0.thumbnails == 0 },
               "multiple files request one icon without image decoding or Quick Look")
+    }
+
+    /// Files, then pictures, then Figma layers, then text: and none of it reads a
+    /// Figma buffer, so a history of Figma copies still opens at once.
+    private static func verifyWebCopyOrder(_ root: URL, png: Data) {
+        func kind(_ values: ClipboardWebCopies.Values) -> ClipboardKind { ClipboardSummary.make(from: [ClipboardPayload(values: values)]).kind }
+        func isFigma(_ kind: ClipboardKind) -> Bool { if case .figma = kind { return true }; return false }
+        check(isFigma(kind(ClipboardWebCopies.figma(text: ""))), "Figma layers with an empty text flavor stay Figma layers")
+        check(kind(ClipboardWebCopies.figma() + [(.png, png)]) == .image, "a picture beside Figma's HTML stays a picture")
+        let file = root.appendingPathComponent("readable.png")
+        check(kind(ClipboardWebCopies.figma() + [(.fileURL, Data(file.absoluteString.utf8))]) == .file, "a Finder item beside Figma's HTML stays a Finder item")
+        check(kind(ClipboardWebCopies.html("<p>words</p>") + [(.string, Data("words".utf8))]) == .text, "HTML with plain text is text")
+
+        // Fifty saved Figma copies with full-size buffers open without decoding one.
+        let history = root.appendingPathComponent("FigmaHistory.plist")
+        let board = NSPasteboard.withUniqueName()
+        let writer = ClipboardStore(pasteboard: board, persistenceURL: history, fileInspector: inertInspector(NSImage()), searchIndexer: inertIndexer())
+        for index in 0..<50 {
+            var values = ClipboardWebCopies.figma(nodes: "1:\(index)|6|0|0")
+            let html = values.firstIndex { $0.type == .html }!
+            values[html].data += Data(repeating: 0x41, count: 48 << 10)
+            board.clearContents(); board.writeObjects([ClipboardWebCopies.item(values)]); _ = writer.saveNow()
+        }
+        writer.cancelStaging(); _ = writer.saveNow(); writer.stop(); board.releaseGlobally()
+        let readerBoard = NSPasteboard.withUniqueName()
+        let reader = ClipboardStore(pasteboard: readerBoard, persistenceURL: history, fileInspector: inertInspector(NSImage()), searchIndexer: inertIndexer())
+        defer { reader.stop(); readerBoard.releaseGlobally() }
+        let started = ProcessInfo.processInfo.systemUptime
+        reader.start()
+        let seconds = ProcessInfo.processInfo.systemUptime - started
+        check(reader.entries.count == 50 && reader.entries.allSatisfy { isFigma($0.kind) } && seconds < 1,
+              "fifty saved Figma copies are recognized at launch in under a second (\(seconds) s)")
     }
 
     private static func writeFixtureHistory(_ urls: [URL], to history: URL, icon: NSImage) {

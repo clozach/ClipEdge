@@ -19,15 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         clipboardStore = ClipboardStore()
-        let settings = revealSettings
-        let recall = ClipboardRecallMemory(minutes: { settings.recallMinutes })
-        drawerController = ClipboardDrawerController(store: clipboardStore, recall: recall,
-                                                     activate: { NSApplication.shared.activate(ignoringOtherApps: true) })
+        drawerController = ClipboardDrawerController(store: clipboardStore, activate: { NSApplication.shared.activate(ignoringOtherApps: true) })
         edgeController = EdgeController(drawerController: drawerController, settings: revealSettings)
         drawerController.onRevealSettings = { [weak self] in self?.settingsController.show() }
         drawerController.revealSettingsWindow = settingsController.window
         historyController = ClipboardHistoryController(store: clipboardStore, paster: drawerController.paster,
-                                                       previewService: drawerController.previewService, recall: recall)
+                                                       previewService: drawerController.previewService)
         let magnets = revealSettings
         clipboardStore.attachesCopiesToCursor = { magnets.showsMagnet(for: .copy) }
         drawerController.pickupMagnet = { magnets.showsMagnet(for: .drawer) }

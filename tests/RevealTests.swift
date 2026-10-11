@@ -117,17 +117,21 @@ import AppKit
         recorder.onRecord?(candidate)
         check(settings.quickLookShortcut == candidate && recorder.shortcut == candidate, "accepted shortcut changes preference and recorder")
         content.layoutSubtreeIfNeeded()
-        let recall = controls.compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "Reopen on the last search" }!
-        let recallNote = controls.compactMap { $0 as? NSTextField }.first { $0.stringValue.hasPrefix("After you paste") }!
-        for control in [popup, slider, dismissal, recorder, recall, recallNote] {
+        let magnets = controls.compactMap { $0 as? NSButton }.first { $0.title == "Show cursor magnets" }!
+        let magnetsNote = controls.compactMap { $0 as? NSTextField }.first { $0.stringValue.hasPrefix("A magnet shows") }!
+        for control in [popup, slider, dismissal, recorder, magnets, magnetsNote] {
             let frame = control.convert(control.bounds, to: content)
             check(!control.hasAmbiguousLayout && frame.width > 0 && frame.height > 0 && content.bounds.contains(frame), "settings control has nonempty, unambiguous in-window bounds")
         }
-        check(recall.numberOfItems == ClipboardRevealSettings.recallChoices.count && recall.titleOfSelectedItem == "For 5 minutes", "Reopen offers Off to 30 minutes, five selected")
-        recall.selectItem(at: 0)
-        _ = recall.sendAction(recall.action, to: recall.target)
-        check(settings.recallMinutes == 0, "choosing Off writes through")
-        check(recorder.nextKeyView?.nextKeyView === recall && (recall.nextKeyView as? NSButton)?.title == "Show cursor magnets", "the Reopen menu joins the keyboard loop, then the magnet switch")
+        // Every opening starts with an empty search (2026-10-10), so there is no Reopen setting.
+        check(controls.compactMap { $0 as? NSPopUpButton }.map { $0.accessibilityLabel() } == ["Reveal mode"] &&
+              !controls.compactMap { $0 as? NSTextField }.contains { $0.stringValue.localizedCaseInsensitiveContains("reopen") },
+              "Settings no longer offers Reopen on the last search")
+        check(recorder.nextKeyView?.nextKeyView === magnets, "after the shortcut, the keyboard goes to the magnet switch")
+        let stack = content.subviews.compactMap { $0 as? NSStackView }.first!
+        check(abs(content.bounds.height - (ceil(stack.fittingSize.height) + 44)) <= 1 &&
+              controller.window!.frame.height <= (NSScreen.main ?? NSScreen.screens[0]).visibleFrame.height,
+              "the window fits its controls without the row and is no taller than the display")
         check(controller.makeMenuItem(keyEquivalent: ",").keyEquivalent == ",", "settings supports the standard menu shortcut")
     }
 

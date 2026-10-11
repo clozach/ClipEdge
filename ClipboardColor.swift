@@ -65,9 +65,12 @@ enum ClipboardColor {
 }
 
 extension ClipboardEntry {
+    /// Text, rich text included, or an HTML-only copy's text; never Figma layers.
     var swatchColor: NSColor? {
-        guard kind == .text || (kind == .other && thumbnail == nil), let plainText else { return nil }
-        return ClipboardColor.parse(plainText)
+        switch kind {
+        case .text, .html: return readableText.flatMap(ClipboardColor.parse)
+        default: return nil
+        }
     }
 }
 
@@ -94,7 +97,8 @@ final class ClipboardSwatchView: NSView {
         NSColor.black.setFill(); outside.fill()
         NSGraphicsContext.restoreGraphicsState()
         let hairline = 1 / max(1, window?.backingScaleFactor ?? 2)
-        NSColor.black.withAlphaComponent(0.22).setStroke()
+        // Resolved here, in this view's appearance: dark on a light ground, light on a dark one.
+        NSColor.labelColor.withAlphaComponent(0.22).setStroke()
         let border = NSBezierPath(ovalIn: rect.insetBy(dx: hairline / 2, dy: hairline / 2))
         border.lineWidth = hairline; border.stroke()
     }

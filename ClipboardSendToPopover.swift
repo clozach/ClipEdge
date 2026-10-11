@@ -20,11 +20,7 @@ final class ClipboardSendToPopover {
         panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 10
-        view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
+        view.surface = .card(radius: 10)
         panel.contentView = view
         resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: nil) { [weak self] _ in
             self?.close()

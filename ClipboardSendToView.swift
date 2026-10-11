@@ -1,8 +1,9 @@
 import AppKit
 
 /// The Send to list: apps that can open the item, then running apps to paste
-/// into. One keyboard stop; ← or Esc goes back.
-final class ClipboardSendToView: NSView {
+/// into. One keyboard stop; ← or Esc goes back. In the window it has no
+/// surface of its own; the drawer's panel gives it a card.
+final class ClipboardSendToView: ClipboardSurfaceView {
     var onSend: ((ClipboardSendTarget) -> Void)?
     var onBack: (() -> Void)?
     private(set) var targets: [ClipboardSendTarget] = []

@@ -32,6 +32,22 @@ final class ClipboardMaterializer {
                 throw PreviewError.unsupportedFile(url.lastPathComponent)
             }
         }
+        // Figma layers have no picture ClipEdge can draw: their words or title,
+        // what they are and the link back. Quick Look gets text, which it draws
+        // in the current appearance; Preview gets a page.
+        if case .figma(let copy) = entry.kind {
+            let card = [copy.carriedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? copy.title,
+                        copy.facts.joined(separator: " · "), copy.explanation, copy.link.absoluteString].joined(separator: "\n\n")
+            let name: String
+            switch copy.selection {
+            case .layers(_, let more): name = more.isEmpty ? "Figma layer" : "Figma layers"
+            case .cut: name = "Figma layers"
+            case .otherData: name = "Figma data"
+            }
+            let file = copy.carriedText == nil ? name : "Figma text"
+            if forPreviewApp { return [try textPDF(card, entry: entry, name: file)] }
+            return [try write(Data(card.utf8), to: try directory(for: entry).appendingPathComponent(file + ".txt"))]
+        }
         let folder = try directory(for: entry)
         if let value = entry.values.first(where: { $0.type == .pdf }) {
             return [try write(value.data, to: folder.appendingPathComponent("Clipboard.pdf"))]
@@ -42,13 +58,16 @@ final class ClipboardMaterializer {
                 return [try write(value.data, to: folder.appendingPathComponent("Clipboard.\(ext)"))]
             }
         }
-        if let text = entry.plainText ?? entry.values.first(where: { $0.type == .URL }).flatMap({ String(data: $0.data, encoding: .utf8) }) {
+        // An HTML-only copy is shown as its text, never as HTML a renderer would load.
+        if let text = entry.readableText ?? entry.values.first(where: { $0.type == .URL }).flatMap({ String(data: $0.data, encoding: .utf8) }) {
             if forPreviewApp { return [try textPDF(text, entry: entry, name: "Clipboard")] }
             return [try write(Data(text.utf8), to: folder.appendingPathComponent("Clipboard.txt"))]
         }
-        // An unknown clipboard flavor has no universal renderer; retain a readable inventory.
-        let description = entry.values.map { "\($0.type.rawValue): \($0.data.count) bytes" }.joined(separator: "\n")
-        return [try textPDF("No system preview for this clipboard format.\n\n" + description, entry: entry, name: "Clipboard formats")]
+        // An unknown clipboard flavor has no universal renderer; retain a readable inventory,
+        // as text for Quick Look (drawn in the current appearance) and a page for Preview.
+        let description = "No system preview for this clipboard format.\n\n" + entry.values.map { "\($0.type.rawValue): \($0.data.count) bytes" }.joined(separator: "\n")
+        if forPreviewApp { return [try textPDF(description, entry: entry, name: "Clipboard formats")] }
+        return [try write(Data(description.utf8), to: folder.appendingPathComponent("Clipboard formats.txt"))]
     }
     func remove(_ entry: ClipboardEntry) throws {
         let folder = root.appendingPathComponent(entry.id.uuidString)

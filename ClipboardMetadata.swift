@@ -8,17 +8,20 @@ import UniformTypeIdentifiers
 struct ClipboardMetadata: Equatable {
     var facts: [String] = []
     var paths: [String] = []
+    /// The site a web copy came from: shown after the facts, never pasted.
+    var site: String?
 
-    var isEmpty: Bool { facts.isEmpty && paths.isEmpty }
-    var line: String { facts.joined(separator: " · ") }
+    var isEmpty: Bool { facts.isEmpty && paths.isEmpty && site == nil }
+    var line: String { (facts + (site.map { ["from \($0)"] } ?? [])).joined(separator: " · ") }
     /// Paths with the home folder shortened. Display only; paste uses `paths`.
     var displayPaths: [String] { paths.map { ($0 as NSString).abbreviatingWithTildeInPath } }
     /// Facts first, then each path, for surfaces that wrap.
     var lines: [String] { ([line] + displayPaths).filter { !$0.isEmpty } }
     /// One line for a narrow row; `lines` stays within reach in previews and help.
     var compact: String { lines.joined(separator: " · ") }
-    /// What a plain-text paste inserts for an item with no text of its own.
-    var pasteText: String { (paths + [line]).filter { !$0.isEmpty }.joined(separator: "\n") }
+    /// What a plain-text paste inserts for an item with no text of its own:
+    /// never the site, which says where the copy was made, not what it holds.
+    var pasteText: String { (paths + [facts.joined(separator: " · ")]).filter { !$0.isEmpty }.joined(separator: "\n") }
 }
 
 extension ClipboardMetadata {
@@ -72,18 +75,33 @@ extension ClipboardMetadata {
     }
 
     /// No disk reads. A Finder item starts with its paths; `files` adds the rest.
+    /// A copy from a web page says which site, never the page's full address.
     static func immediate(for entry: ClipboardEntry) -> ClipboardMetadata {
         if !entry.fileURLs.isEmpty { return ClipboardMetadata(paths: entry.fileURLs.map(\.path)) }
+        var metadata: ClipboardMetadata
         switch entry.kind {
+        case .figma(let copy):
+            return ClipboardMetadata(facts: copy.facts)
         case .image:
             guard let value = entry.values.first(where: { ClipboardFlavors.images.contains($0.type) }) else { return ClipboardMetadata() }
-            return image(value.data, type: value.type)
+            metadata = image(value.data, type: value.type)
         case .link:
             let host = entry.plainText.flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }?.host
-            return ClipboardMetadata(facts: [host ?? "Link"])
+            metadata = ClipboardMetadata(facts: [host ?? "Link"])
+        case .html(let html):
+            if let url = html.address {
+                // A lone address names its site, as a link does.
+                metadata = ClipboardMetadata(facts: [url.host ?? "Link"])
+            } else {
+                // A copy longer than the summary reads has at least these counts.
+                metadata = text(html.text)
+                if !html.isComplete { metadata.facts = metadata.facts.map { "at least \($0)" } }
+            }
         case .text, .file, .other:
-            return entry.plainText.map(text) ?? ClipboardMetadata()
+            metadata = entry.plainText.map(text) ?? ClipboardMetadata()
         }
+        metadata.site = ClipboardFlavors.sourceSite(in: entry.values)
+        return metadata
     }
 
     static func duration(_ seconds: Double) -> String {

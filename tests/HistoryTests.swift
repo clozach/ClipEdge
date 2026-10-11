@@ -399,12 +399,14 @@ import AppKit
               "the second ⇧⌘⌫ deletes everything; the window stays open and says so")
         check(press(51, [.shift, .command]) && !history.isConfirmingDeleteAll, "an empty history has nothing to delete")
         check(press(36) && press(8, .command, "c") && history.isVisible && store.liftedEntryID == nil, "Return and ⌘C on an empty history do nothing")
-        recallChecks()
+        openingChecks()
+        searchUndoChecks()
         keyboardReturnChecks()
         magnetChecks()
+        webCopyChecks()
         check(ClipboardHistoryCommand.command(for: key(3, [.command], characters: "f")) == .find, "Command-F is the window's search key")
         check(ClipboardHistoryCommand.command(for: key(3, [.command, .shift], characters: "f")) == nil, "Shift-Command-F is left alone")
-        print("PASS: \(assertions) history-window/paste/send-to/recall assertions; named board, injected delivery, no input injection")
+        print("PASS: \(assertions) history-window/paste/send-to/opening assertions; named board, injected delivery, no input injection")
     }
 
     /// Closing a window that holds the keyboard must not hand it to another ClipEdge window:
@@ -449,6 +451,7 @@ import AppKit
         check(ClipboardRevealSettings(defaults: defaults).magnetSources == [.window], "a saved choice this version doesn't know is skipped")
 
         let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
         let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
         store.attachesCopiesToCursor = { settings.showsMagnet(for: .copy) }
         board.clearContents(); board.setString("Copied with the copy magnet off", forType: .string); _ = store.saveNow()
@@ -509,81 +512,166 @@ import AppKit
         }
     }
 
-    /// The Reopen setting: using an entry remembers it with the tab and search
-    /// that found it; the window and the drawer reopen there for a few minutes.
-    private static func recallChecks() {
+    /// Figma layers and HTML-only text in the window: the card explains them,
+    /// ⌃⌘⏎ pastes the link or the words, and Send to opens the link in a browser.
+    private static func webCopyChecks() {
         let board = NSPasteboard.withUniqueName()
         let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
-        ClipboardDemo.seed(store, board: board)
-        for text in ["Trip: pack a notebook", "Trip: book a room"] {
-            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow()
+        defer { store.stop(); board.releaseGlobally() }
+        let layersValues = ClipboardWebCopies.figma()
+        for values in [layersValues, ClipboardWebCopies.html(ClipboardWebCopies.plainHTML)] {
+            board.clearContents(); board.writeObjects([ClipboardWebCopies.item(values)]); _ = store.saveNow()
         }
         store.cancelStaging()
-        var clock = Date(timeIntervalSinceReferenceDate: 800_000_000), minutes = 5
-        let memory = ClipboardRecallMemory(minutes: { minutes }, now: { clock })
+        let page = store.entries[0], layers = store.entries[1]
+        guard case .figma(let copy) = layers.kind else { fatalError("FAIL: the window's fixture holds Figma layers") }
+        var posted: [pid_t] = [], scheduled: [() -> Void] = []
+        var environment = ClipboardPaster.Environment()
+        environment.frontmost = { 500 }
+        environment.postPaste = { posted.append($0); return true }
+        environment.schedule = { _, action in scheduled.append(action) }
+        environment.failed = { fatalError("FAIL: a web copy's paste was refused") }
         let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-recall-tests-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-web-history-\(UUID().uuidString)"))
+        defer { materializer.removeAll() }
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: environment),
+                                                 previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
+        let ahead = ClipboardPaster.Target(pid: 500) {}
+        history.prepare = { ahead }
+        let browser = URL(fileURLWithPath: "/Applications/Fixture Browser.app")
+        history.sendSources = ClipboardSendTo.Sources(openers: { $0 == copy.link ? [browser] : [] },
+                                                      running: { [ClipboardSendTo.RunningApp(pid: 900, name: "Notes", url: nil)] }, pasteTarget: { _ in nil })
+        let press = { (code: UInt16, modifiers: NSEvent.ModifierFlags) in _ = history.handleKey(key(code, modifiers)) }
+
+        history.hotKeyPressed()
+        history.view.canvas.choose(layers.id)
+        check(history.view.card.entryID == layers.id && history.view.card.bodyText.contains(copy.explanation) && history.view.card.linkText == copy.link.absoluteString,
+              "the card explains Figma layers and shows their link")
+        check(history.view.card.bodyText.hasSuffix("⌃⌘⏎ pastes the link."), "the card names the key that pastes this row's link here")
+        press(36, [.control, .command])
+        scheduled.removeFirst()()
+        check(posted == [500] && board.string(forType: .string) == copy.link.absoluteString && board.data(forType: .html) == nil, "⌃⌘⏎ pastes the link to the layers")
+        while !scheduled.isEmpty { scheduled.removeFirst()() }
+        check(board.data(forType: .html) == layersValues.first { $0.type == .html }?.data, "afterwards the layers are back on the clipboard for Figma")
+
+        history.hotKeyPressed()
+        history.view.canvas.choose(page.id)
+        press(36, [.control, .command])
+        scheduled.removeFirst()()
+        check(board.string(forType: .string) == "ClipEdge fixture & HTML-only copy", "⌃⌘⏎ pastes an HTML-only copy's words")
+        while !scheduled.isEmpty { scheduled.removeFirst()() }
+
+        history.hotKeyPressed()
+        history.view.canvas.choose(layers.id)
+        press(48, [])
+        check(history.view.sendTo.targets == [.open(app: browser, items: [copy.link]), .paste(pid: 900, name: "Notes", app: nil)],
+              "Send to opens the layers' link in a browser first, then offers paste rows")
+        history.view.sendTo.keyDown(with: key(53))
+        history.view.canvas.choose(page.id)
+        press(48, [])
+        check(history.view.sendTo.targets == [.paste(pid: 900, name: "Notes", app: nil)], "an HTML-only copy can only be pasted")
+        history.view.sendTo.keyDown(with: key(53))
+        history.close()
+    }
+
+    /// Every opening starts from All, an empty search and the newest entry, even
+    /// right after an entry was used from a search (Al, 2026-10-10: a search left
+    /// from before hid what he had just copied).
+    private static func openingChecks() {
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        defer { store.stop(); board.releaseGlobally() }
+        func copy(_ text: String) { board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging() }
+        ClipboardDemo.seed(store, board: board)
+        ["Trip: pack a notebook", "Trip: book a room"].forEach(copy)
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
+        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-opening-tests-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
-                                                 previewService: ClipboardPreviewService(materializer: materializer), recall: memory, panel: panel)
+                                                 previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
         history.prepare = { nil }
         history.openInPreview = { _, done in done(nil) }
         let search = history.view.search
         func type(_ query: String) { search.stringValue = query; history.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
         var selectedText: NSRange? { (panel.firstResponder as? NSTextView)?.selectedRange() }
+        func opensFresh() -> Bool {
+            search.stringValue.isEmpty && history.view.currentTab == .all && history.visibleEntries.count == store.entries.count &&
+            history.selectedEntry === store.entries[0] && selectedText == NSRange(location: 0, length: 0)
+        }
 
         history.hotKeyPressed()
-        check(search.stringValue.isEmpty && memory.last == nil, "with nothing used yet, the window opens fresh")
+        _ = history.handleKey(key(20, .command, characters: "3"))
         type("trip")
         _ = history.handleKey(key(125))
         let trip = history.selectedEntry!
+        check(history.view.currentTab == .text && trip.title == "Trip: pack a notebook", "a search in Text chooses an older match")
         _ = history.handleKey(key(31, .command, characters: "o"))
-        check(!history.isVisible && memory.last?.entryID == trip.id && memory.last?.query == "trip" && memory.last?.tab == .all,
-              "opening an entry remembers it with the tab and search that found it")
-        clock += 60
+        check(!history.isVisible, "opening the match closes the window")
+        copy("Harbor: ferry times")
         history.hotKeyPressed()
-        check(search.stringValue == "trip" && history.selectedEntry === trip, "reopening starts on that search with the entry chosen")
-        check(selectedText == NSRange(location: 0, length: 4), "the offered search is selected, so typing replaces it")
-        type("t")
-        check(search.stringValue == "t" && history.selectedEntry != nil, "typing starts a new search")
-        history.close()
+        check(opensFresh() && store.entries[0].title == "Harbor: ferry times",
+              "reopening starts on All with an empty search, the new copy shown and chosen")
 
-        history.hotKeyPressed(); type("")
-        _ = history.handleKey(key(19, .command, characters: "2"))
-        let picture = history.selectedEntry!
+        type("trip")
+        history.close()
+        copy("Harbor: last ferry")
+        history.hotKeyPressed()
+        check(opensFresh() && store.entries[0].title == "Harbor: last ferry", "a search left when the window closed is gone at the next opening")
+
+        type("ferry")
+        _ = history.handleKey(key(125))
         _ = history.handleKey(key(8, .command, characters: "c"))
         store.cancelStaging()
-        clock += 30
         history.hotKeyPressed()
-        check(history.view.currentTab == .images && search.stringValue == picture.title && history.selectedEntry === picture,
-              "an entry used without a search reopens on its tab and title")
+        check(opensFresh(), "after ⌘C the window still opens fresh")
+        _ = history.handleKey(key(3, .command, characters: "f"))
+        check(selectedText == NSRange(location: 0, length: 0), "⌘F on an empty search selects nothing")
+        type("ferry")
+        _ = history.handleKey(key(3, .command, characters: "f"))
+        check(selectedText == NSRange(location: 0, length: 5), "⌘F still selects a typed search, so typing replaces it")
         history.close()
+    }
+}
 
-        clock += 300
+extension HistoryTests {
+    /// Typing left in the search when the window closed (Tab to Send to, then away) is
+    /// not undone against the next opening's empty search, which threw NSRangeException.
+    /// The real window class, isolated, since its field editor shares the window's undo.
+    static func searchUndoChecks() {
+        let marker = "CLIPEDGE_TEST_PREVIEW_ROOT", previous = ProcessInfo.processInfo.environment[marker]
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-search-undo-\(UUID().uuidString)")
+        setenv(marker, root.path, 1)
+        defer {
+            if let previous { setenv(marker, previous, 1) } else { unsetenv(marker) }
+            try? FileManager.default.removeItem(at: root)
+        }
+        runLoopPass() // an earlier window's closing hold on the keyboard lets go
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        defer { store.stop(); board.releaseGlobally() }
+        for text in ["Forest walk", "Ocean swim"] { board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging() }
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: ClipboardPreviewService(materializer: ClipboardMaterializer(root: root.appendingPathComponent("previews"))))
+        history.prepare = { nil }
+        guard let panel = history.view.window else { fatalError("FAIL: the window holds its view") }
         history.hotKeyPressed()
-        check(search.stringValue.isEmpty && history.view.currentTab == .all && history.selectedEntry === store.entries[0],
-              "after the window of minutes, the window opens fresh")
+        (panel.firstResponder as? NSTextView)?.insertText("walk", replacementRange: NSRange(location: NSNotFound, length: 0))
+        runLoopPass()
+        check(history.view.search.stringValue == "walk" && panel.undoManager?.canUndo == true, "typing in the search can be undone while the window is open")
+        _ = history.handleKey(key(48))
+        check(history.isSending, "Tab moves the keyboard to Send to, leaving the typing behind")
         history.close()
-        clock -= 290; minutes = 0
-        check(memory.recall() == nil, "Off recalls nothing")
-        minutes = 5
-        check(memory.recall() != nil, "within the window, the memory answers")
-        check(memory.recall(usedAfter: clock) == nil && memory.recall(usedAfter: clock - 3600) != nil,
-              "a drawer closed after the use keeps its own search")
+        history.hotKeyPressed()
+        check(history.view.search.stringValue.isEmpty && panel.undoManager?.canUndo == false, "reopening leaves no undo that would bring back an old search")
+        check(panel.performKeyEquivalent(with: key(6, .command, characters: "z")) && history.view.search.stringValue.isEmpty, "⌘Z then leaves the empty search as it is")
+        history.close()
+    }
 
-        // The drawer's browser reopens on the same memory.
-        let browser = ClipboardBrowserView(frame: NSRect(x: 0, y: 0, width: 360, height: 600))
-        browser.update(entries: store.entries, attachedID: nil)
-        memory.remember(trip, tab: .text, query: "  trip ")
-        browser.restore(memory.recall()!)
-        check(browser.currentTab == .text && browser.search.stringValue == "trip" && browser.canvas.selected?.entry === trip,
-              "the drawer reopens on the remembered tab and search with the entry chosen")
-        check(ClipboardRevealSettings(defaults: nil).recallMinutes == 5, "Reopen defaults to five minutes")
-        let settings = ClipboardRevealSettings(defaults: nil)
-        settings.recallMinutes = 7
-        check(settings.recallMinutes == 5, "only the offered choices are kept")
-        settings.recallMinutes = 0
-        check(settings.recallMinutes == 0, "Off is a choice")
+    /// One pass of the main run loop: undo closes the typing's group, making it a
+    /// finished step, and queued work (a closing window's hold on the keyboard) runs.
+    static func runLoopPass() {
+        RunLoop.current.add(Timer(timeInterval: 0.01, repeats: false) { _ in }, forMode: .default)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
 }
 
