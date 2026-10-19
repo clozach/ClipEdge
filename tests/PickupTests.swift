@@ -127,6 +127,9 @@ import AppKit
         }
         let entries = [entry("A"), entry("B"), entry("C")]
         let browser = ClipboardBrowserView(frame: NSRect(x: 0, y: 0, width: 390, height: 700))
+        // The pointer moves onto every card it hovers.
+        var moved = 0.0
+        browser.canvas.pointer = { moved += 1; return NSPoint(x: moved, y: 0) }
         browser.update(entries: entries, attachedID: nil)
         for tile in browser.canvas.tiles {
             tile.onHover?()
@@ -134,8 +137,15 @@ import AppKit
         }
         browser.update(entries: entries, attachedID: entries[0].id)
         check(browser.canvas.tiles.filter(\.isChosen).count == 1 && browser.canvas.tiles.filter(\.isAttached).count == 1, "lifted slot and hover cannot create duplicate selection")
-        var previewed: UUID?
-        browser.canvas.onPreview = { previewed = $0.id }
+        var previewed: UUID?, escaped = false
+        browser.perform = { action, entry in
+            switch action {
+            case .quickLook: previewed = entry?.id
+            case .escape: escaped = true
+            default: return false
+            }
+            return true
+        }
         func key(_ code: UInt16, repeatKey: Bool = false) -> NSEvent {
             NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
                             context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: repeatKey, keyCode: code)!
@@ -145,8 +155,6 @@ import AppKit
         previewed = nil
         browser.canvas.keyDown(with: key(49, repeatKey: true))
         check(previewed == nil, "held Space does not repeat preview toggling")
-        var escaped = false
-        browser.canvas.onEscape = { escaped = true }
         browser.search.stringValue = "no matches"
         browser.update(entries: entries, attachedID: entries[0].id)
         browser.canvas.keyDown(with: key(53))

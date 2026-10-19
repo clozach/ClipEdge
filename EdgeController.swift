@@ -63,7 +63,9 @@ final class EdgeController {
         }
 
         exitPolicy.reset()
-        if revealTrigger.shouldReveal(pointerOverTab: drawerController.tabContains(pointer), behavior: settings.behavior, now: clock()) {
+        let overTab = drawerController.revealTargetContains(pointer)
+        guard drawerController.canAutomaticallyReveal(pointerOverTab: overTab) else { revealTrigger.reset(); return }
+        if revealTrigger.shouldReveal(pointerOverTab: overTab, behavior: settings.behavior, now: clock()) {
             drawerController.showAtTab()
             exitPolicy.reset()
         }

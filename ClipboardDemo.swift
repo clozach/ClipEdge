@@ -2,6 +2,8 @@ import AppKit
 
 /// Default fixtures use a named clipboard. --demo-system-clipboard opts into
 /// a restoring integration lease; neither mode reads/writes the history archive.
+/// --demo-sample-history shows a temporary copy of the sample history in place of the
+/// invented fixtures, for decks and documentation; the sample itself is never written.
 enum ClipboardDemo {
     static func image(_ title: String, size: NSSize, color: NSColor) -> NSImage {
         let image = NSImage(size: size)
@@ -38,6 +40,26 @@ enum ClipboardDemo {
         }
         store.cancelStaging()
     }
+    /// A throwaway copy of the sample history; exits when there is none to show.
+    static func sampleCopy() -> URL {
+        guard let source = ClipboardHistorySource.sample.url(), ClipboardHistoryFile.exists(source) else {
+            FileHandle.standardError.write(Data("No sample history yet: seed one with --sample-history seed, or switch to it once in ClipEdge's menu (hold Option).\n".utf8))
+            exit(EXIT_FAILURE)
+        }
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-demo-sample-\(UUID().uuidString)/History.plist")
+        do {
+            try FileManager.default.createDirectory(at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Each part the sample has (its store folder, an old file), under the same names.
+            for part in ClipboardHistoryFile.parts(of: source) {
+                try FileManager.default.copyItem(at: part, to: copy.deletingLastPathComponent().appendingPathComponent(part.lastPathComponent))
+            }
+        } catch {
+            FileHandle.standardError.write(Data("The sample history could not be copied: \(error.localizedDescription)\n".utf8))
+            exit(EXIT_FAILURE)
+        }
+        return copy
+    }
+
     static func run() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -49,9 +71,10 @@ enum ClipboardDemo {
         let usesSystemBoard = CommandLine.arguments.contains("--demo-system-clipboard")
         let lease = usesSystemBoard ? ClipboardFixtureLease() : nil
         let board = usesSystemBoard ? NSPasteboard.general : NSPasteboard.withUniqueName()
-        let store = ClipboardStore(pasteboard: board)
+        let sample = CommandLine.arguments.contains("--demo-sample-history") ? sampleCopy() : nil
+        let store = ClipboardStore(pasteboard: board, persistenceURL: sample)
         store.start()
-        seed(store, board: board)
+        if sample == nil { seed(store, board: board) }
         if CommandLine.arguments.contains("--demo-web-copies") { seedWebCopies(store, board: board) }
         lease?.register(store.entries)
         // The fixture board must never trigger a paste from the user's general board.
@@ -63,11 +86,17 @@ enum ClipboardDemo {
             magnetController: ClipboardMagnetController(commandClickEnabled: usesSystemBoard), defaults: nil,
             paster: ClipboardPaster(store: store, environment: usesSystemBoard ? .init() : .inert),
             activate: { app.activate(ignoringOtherApps: true) })
+        controller.motionProfiles = { settings.drawerMotion(for: $0) }
+        controller.sizes = { settings.sizes }
         let history = ClipboardHistoryController(store: store, paster: controller.paster, previewService: controller.previewService)
         history.prepare = { controller.hide(animated: false); return ClipboardPaster.frontmostTarget() }
         store.attachesCopiesToCursor = { settings.showsMagnet(for: .copy) }
         controller.pickupMagnet = { settings.showsMagnet(for: .drawer) }
         history.pickupMagnet = { settings.showsMagnet(for: .window) }
+        history.sizes = { settings.sizes }
+        controller.magnetController.previewScale = { settings.sizes.previewScale }
+        ClipboardTileTooltip.shared.textScale = { settings.sizes.textScale }
+        controller.magnetController.textScale = { settings.sizes.textScale }
         let settingsController = ClipboardRevealSettingsController(settings: settings)
         // --demo-hold-drawer: an open drawer never hides on its own, so a check can see who takes the keyboard back.
         let holdsDrawer = CommandLine.arguments.contains("--demo-hold-drawer")
@@ -76,7 +105,7 @@ enum ClipboardDemo {
             return NSEvent.mouseLocation
         })
         controller.onRevealSettings = { settingsController.show() }
-        controller.revealSettingsWindow = settingsController.window
+        settingsController.onClose = { controller.settingsDidClose() }
         if let i = CommandLine.arguments.firstIndex(of: "--demo-appearance"), CommandLine.arguments.indices.contains(i + 1) {
             app.appearance = NSAppearance(named: CommandLine.arguments[i + 1] == "dark" ? .darkAqua : .aqua)
         }
@@ -94,6 +123,8 @@ enum ClipboardDemo {
             controller.browser.quickLookHint = settings.quickLookShortcut.displayString
             controller.magnetController.quickLookHint = settings.quickLookShortcut.displayString
             controller.releaseMagnet { settings.showsMagnet(for: $0) }
+            controller.applySizes()
+            history.applySizes()
         }
         defer { NotificationCenter.default.removeObserver(hints) }
         let hotKeyStatus = hotKey.register(shortcut: settings.quickLookShortcut)
@@ -114,7 +145,7 @@ enum ClipboardDemo {
             if CommandLine.arguments.contains("--inspect-preview"), preview.isVisible {
                 app.windows.first { $0.title == "ClipEdge Cursor Magnet" }?.makeKeyAndOrderFront(nil)
             }
-            let report: [String: Any] = ["shortcutStatus": hotKeyStatus, "historyShortcutStatus": historyStatus, "plainShortcutStatus": plainStatus, "historyVisible": history.isVisible, "historyKey": history.holdsKeyboard, "historyIndex": store.entries.firstIndex { $0.id == history.selectedEntry?.id } ?? -1, "historyShown": history.visibleEntries.count, "historySelected": history.selectedEntry?.title ?? "none", "historyTab": history.view.currentTab.title, "historyQuery": history.view.search.stringValue, "historyConfirmingAll": history.isConfirmingDeleteAll, "historySending": history.isSending, "historyArmed": history.view.canvas.armedID != nil, "sendTo": history.view.sendTo.selected?.name ?? "none", "frontmost": NSWorkspace.shared.frontmostApplication?.localizedName ?? "none", "order": store.entries.map(\.title), "attached": store.entries.first { $0.id == store.stagedEntryID }?.title ?? "none", "preview": String(describing: preview.presentation), "carouselIndex": store.carouselPosition?.index ?? -1, "carouselCount": store.carouselPosition?.count ?? 0, "previewFrame": NSStringFromRect(preview.frame)]
+            let report: [String: Any] = ["shortcutStatus": hotKeyStatus, "historyShortcutStatus": historyStatus, "plainShortcutStatus": plainStatus, "historyVisible": history.isVisible, "historyKey": history.holdsKeyboard, "historyIndex": store.entries.firstIndex { $0.id == history.selectedEntry?.id } ?? -1, "historyShown": history.visibleEntries.count, "historySelected": history.selectedEntry?.title ?? "none", "historyTab": history.view.currentTab.title, "historyQuery": history.view.search.stringValue, "historySending": history.isSending, "historyArmed": history.view.canvas.armedID != nil, "sendTo": history.view.sendTo.selected?.name ?? "none", "frontmost": NSWorkspace.shared.frontmostApplication?.localizedName ?? "none", "order": store.entries.map(\.title), "attached": store.entries.first { $0.id == store.stagedEntryID }?.title ?? "none", "preview": String(describing: preview.presentation), "carouselIndex": store.carouselPosition?.index ?? -1, "carouselCount": store.carouselPosition?.count ?? 0, "previewFrame": NSStringFromRect(preview.frame)]
             var diagnostics = report
             diagnostics["delivery"] = preview.pasteDiagnostics
             diagnostics["keyWindow"] = app.keyWindow?.title ?? "none"

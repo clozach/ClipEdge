@@ -71,10 +71,10 @@ final class ClipboardSendToView: ClipboardSurfaceView {
         list.needsDisplay = true
     }
 
-    func move(_ delta: Int, wrapping: Bool = false) {
+    /// The arrows stop at the ends; the window's shortcut goes round them.
+    func move(_ delta: Int, ends: ClipboardListEnds = .stop) {
         guard !targets.isEmpty else { return }
-        let next = selectedIndex + delta
-        select(wrapping ? (next + targets.count) % targets.count : min(max(0, next), targets.count - 1))
+        select(ends.index(selectedIndex + delta, count: targets.count))
     }
 
     private func select(_ index: Int) {
@@ -86,7 +86,7 @@ final class ClipboardSendToView: ClipboardSurfaceView {
     }
 
     override func keyDown(with event: NSEvent) {
-        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let modifiers = event.chordModifiers
         switch event.keyCode {
         case 53, 123: onBack?()
         case 125: move(1)

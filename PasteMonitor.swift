@@ -6,6 +6,8 @@ import ApplicationServices
 final class PasteMonitor {
     var onPaste: ((NSPoint) -> Void)?
     var onCancel: (() -> Void)?
+    /// A foreground ClipEdge surface can own Escape's one-step dismissal ladder.
+    var shouldHandleCancel: () -> Bool = { true }
 
     enum KeyAction: Equatable { case paste, cancel }
     enum DeliverySource: String { case quartzSession, quartzProcess, appKitGlobal, appKitLocal, polling, injected }
@@ -273,11 +275,19 @@ final class PasteMonitor {
             self?.receive(event, source: .appKitGlobal)
         }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, self.active, !self.pastePending else { return event }
-            let cancels = Self.keyAction(keyCode: event.keyCode, flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))) == .cancel
-            self.receive(event, source: .appKitLocal)
-            return cancels ? nil : event
+            guard let self else { return event }
+            return self.receiveLocalKey(event)
         }
+    }
+
+    /// Kept callable without installing a native monitor, so ownership and
+    /// event consumption are tested together rather than as separate policies.
+    func receiveLocalKey(_ event: NSEvent) -> NSEvent? {
+        guard active, !pastePending else { return event }
+        let cancels = Self.keyAction(keyCode: event.keyCode,
+            flags: CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue))) == .cancel && shouldHandleCancel()
+        receive(event, source: .appKitLocal)
+        return cancels ? nil : event
     }
 
     func receive(_ event: NSEvent, source: DeliverySource = .injected) {
@@ -324,7 +334,7 @@ final class PasteMonitor {
         guard active, !pastePending else { return }
         if type == .keyDown {
             switch Self.keyAction(keyCode: keyCode, flags: flags) {
-            case .cancel: onCancel?()
+            case .cancel: if shouldHandleCancel() { onCancel?() }
             case .paste: reportPaste(at: appKitPoint(location))
             case nil:
                 let modifiers = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
@@ -428,7 +438,7 @@ final class PasteMonitor {
         let action = environment.keyAction()
         if action != previousFallbackAction {
             if let action { actionCounts["polling.\(action)", default: 0] += 1 }
-            if action == .cancel { onCancel?() }
+            if action == .cancel, shouldHandleCancel() { onCancel?() }
             if action == .paste { reportPaste(at: environment.pointerLocation()) }
         }
         previousFallbackAction = action

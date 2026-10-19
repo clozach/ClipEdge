@@ -10,6 +10,8 @@ struct ClipboardTabPlacement: Codable, Equatable {
     var center: Double = 0.5
     var length: Double = 240
     var screenID: UInt32? = nil
+    /// The drawer's width as last dragged by its edge (Al, 2026-10-16); nil keeps the default.
+    var bodyWidth: Double? = nil
 }
 
 struct ClipboardDockLayout {
@@ -28,8 +30,18 @@ enum ClipboardTabGeometry {
     static let defaultLength: CGFloat = 240
     static let endMargin: CGFloat = 8
     static let bodyOverlap: CGFloat = 8
+    /// The drawer's width until its edge is dragged, at most this share of a side-docked screen.
+    static let defaultBodyWidth: CGFloat = 390
+    static let defaultSideShare: CGFloat = 0.45
+    /// The widest a dragged drawer gets, as a share of the screen.
+    static let widestShare: CGFloat = 0.9
+    /// The narrowest the drawer's content lays out: its four tabs whole, their keys in caps, with
+    /// Select moved under the search (`ClipboardBrowserView`).
+    static let contentMinimumWidth: CGFloat = 320
 
-    static func layout(placement: ClipboardTabPlacement, in visibleFrame: NSRect) -> ClipboardDockLayout {
+    /// `minimumBodyWidth` is the narrowest the content can lay out (the browser's own need).
+    static func layout(placement: ClipboardTabPlacement, in visibleFrame: NSRect,
+                       minimumBodyWidth: CGFloat = contentMinimumWidth) -> ClipboardDockLayout {
         let frame = usableFrame(visibleFrame)
         let axis = usableAxis(for: placement.edge, in: frame)
         let resolved = resolvedPlacement(placement, axis: axis, maximumLength: maximumTabLength(for: placement.edge, in: frame))
@@ -40,8 +52,9 @@ enum ClipboardTabGeometry {
         case .left, .right:
             let depth = min(tabDepth, frame.width)
             let overlap = min(bodyOverlap, depth)
-            let bodyWidth = min(390, frame.width * 0.45,
-                                max(0, frame.width - depth + overlap))
+            let room = max(0, frame.width - depth + overlap)
+            let bodyWidth = width(placement.bodyWidth, default: min(defaultBodyWidth, frame.width * defaultSideShare),
+                                  minimum: minimumBodyWidth, maximum: min(room, frame.width * widestShare))
             let join = min(overlap, bodyWidth)
             let tab = NSRect(x: placement.edge == .left ? frame.minX : frame.maxX - depth,
                              y: center - length / 2, width: depth, height: length)
@@ -53,7 +66,8 @@ enum ClipboardTabGeometry {
         case .top:
             let depth = min(tabDepth, frame.height)
             let overlap = min(bodyOverlap, depth)
-            let bodyWidth = min(390, frame.width)
+            let bodyWidth = width(placement.bodyWidth, default: min(defaultBodyWidth, frame.width),
+                                  minimum: minimumBodyWidth, maximum: frame.width * widestShare)
             let bodyHeight = min(700, frame.height * 0.8,
                                  max(0, frame.height - depth + overlap))
             let tab = NSRect(x: center - length / 2, y: frame.maxY - depth,
@@ -65,6 +79,13 @@ enum ClipboardTabGeometry {
             let exposedTab = NSRect(x: tab.minX, y: body.minY - depth + min(overlap, bodyHeight), width: length, height: depth)
             return ClipboardDockLayout(tabFrame: tab, bodyFrame: body, expandedTabFrame: exposedTab)
         }
+    }
+
+    /// The dragged width, or the default, kept between what the content needs and `maximum`
+    /// (the maximum wins on a screen too narrow for both).
+    private static func width(_ requested: Double?, default fallback: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
+        let chosen = requested.flatMap { $0.isFinite ? CGFloat($0) : nil } ?? fallback
+        return max(0, min(maximum, max(min(minimum, maximum), chosen)))
     }
 
     /// Selects the nearest permitted boundary. The bottom is intentionally not

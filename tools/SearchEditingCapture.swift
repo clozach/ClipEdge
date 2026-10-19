@@ -3,6 +3,8 @@ import AppKit
 /// Native event dispatch to the two real search panels. Named history; no global key injection.
 @main enum SearchEditingCapture {
     static func main() throws {
+        let previews = ClipboardMaterializer.usePrivateRoot()
+        defer { try? FileManager.default.removeItem(at: previews) }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.appearance = NSAppearance(named: .aqua)

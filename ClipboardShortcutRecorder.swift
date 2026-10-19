@@ -8,6 +8,8 @@ final class ClipboardShortcutRecorder: NSButton {
     var shortcut = ClipboardShortcut.defaultQuickLook { didSet { refresh() } }
     var onRecord: ((ClipboardShortcut) -> Void)?
     var onValidationError: ((String) -> Void)?
+    var onRecordingChange: (() -> Void)?
+    var actionName = "Quick Look" { didSet { refresh() } }
     var isRecording: Bool { recordingState == .recording }
     override var acceptsFirstResponder: Bool { true }
 
@@ -16,25 +18,24 @@ final class ClipboardShortcutRecorder: NSButton {
         bezelStyle = .rounded
         target = self
         action = #selector(beginRecording)
-        setAccessibilityLabel("Quick Look global shortcut")
         refresh()
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
 
     @objc private func beginRecording() {
+        guard !isRecording else { return }
         recordingState = .recording
         window?.makeFirstResponder(self)
-        onValidationError?("Press a shortcut using Control, Option, or Command. Escape cancels.")
+        onRecordingChange?()
+        onValidationError?("Press a shortcut using Control, Option, or Command.")
         refresh()
     }
 
     override func keyDown(with event: NSEvent) {
         guard case .recording = recordingState else { super.keyDown(with: event); return }
-        if event.keyCode == 53, event.modifierFlags.intersection([.control, .option, .shift, .command]).isEmpty {
-            recordingState = .idle
-            onValidationError?("")
-            refresh()
+        if event.keyCode == 53, event.chordModifiers.isEmpty {
+            cancelRecording()
             return
         }
         guard !event.isARepeat else { return }
@@ -44,6 +45,7 @@ final class ClipboardShortcutRecorder: NSButton {
         }
         recordingState = .idle
         onRecord?(shortcut)
+        onRecordingChange?()
         refresh()
     }
 
@@ -54,15 +56,22 @@ final class ClipboardShortcutRecorder: NSButton {
     }
 
     override func resignFirstResponder() -> Bool {
-        if isRecording { onValidationError?("") }
-        recordingState = .idle
-        refresh()
+        cancelRecording()
         return super.resignFirstResponder()
+    }
+
+    func cancelRecording() {
+        guard isRecording else { return }
+        recordingState = .idle
+        onValidationError?("")
+        onRecordingChange?()
+        refresh()
     }
 
     private func refresh() {
         title = recordingState == .recording ? "Type shortcut…" : shortcut.displayString
+        setAccessibilityLabel("\(actionName) global shortcut")
         setAccessibilityValue(recordingState == .recording ? "Recording shortcut" : shortcut.accessibilityDescription)
-        toolTip = "Click to record a new global Quick Look shortcut."
+        toolTip = "Click to record a new global \(actionName) shortcut."
     }
 }

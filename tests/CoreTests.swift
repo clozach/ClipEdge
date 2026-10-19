@@ -76,7 +76,7 @@ import PDFKit
         ClipboardDemo.seed(store, board: board)
         browser.update(entries: store.entries, attachedID: nil)
         check(browser.visibleEntries.count == store.entries.count, "All includes every retained item")
-        browser.tabs.selectedSegment = 1
+        browser.tabs.selectedSegment = ClipboardBrowserTab.images.rawValue
         browser.update(entries: store.entries, attachedID: nil)
         check(browser.visibleEntries.count == 3, "Images filters text out")
         for value in [1.0, 2.0, 3.0] {

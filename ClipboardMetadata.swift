@@ -76,14 +76,18 @@ extension ClipboardMetadata {
 
     /// No disk reads. A Finder item starts with its paths; `files` adds the rest.
     /// A copy from a web page says which site, never the page's full address.
+    /// A picture or text that also carries an app's own format says so after its own facts.
     static func immediate(for entry: ClipboardEntry) -> ClipboardMetadata {
         if !entry.fileURLs.isEmpty { return ClipboardMetadata(paths: entry.fileURLs.map(\.path)) }
         var metadata: ClipboardMetadata
         switch entry.kind {
         case .figma(let copy):
             return ClipboardMetadata(facts: copy.facts)
+        case .appData(let data):
+            // The title already names the app; the facts count its formats.
+            return ClipboardMetadata(facts: [data.formatsFact], site: ClipboardFlavors.sourceSite(in: entry.values))
         case .image:
-            guard let value = entry.values.first(where: { ClipboardFlavors.images.contains($0.type) }) else { return ClipboardMetadata() }
+            guard let value = entry.values.first(where: { ClipboardFlavors.isPicture($0.type) }) else { return ClipboardMetadata() }
             metadata = image(value.data, type: value.type)
         case .link:
             let host = entry.plainText.flatMap { URL(string: $0.trimmingCharacters(in: .whitespacesAndNewlines)) }?.host
@@ -100,6 +104,7 @@ extension ClipboardMetadata {
         case .text, .file, .other:
             metadata = entry.plainText.map(text) ?? ClipboardMetadata()
         }
+        if let appData = entry.appData { metadata.facts += appData.facts }
         metadata.site = ClipboardFlavors.sourceSite(in: entry.values)
         return metadata
     }

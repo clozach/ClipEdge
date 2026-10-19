@@ -8,12 +8,15 @@ struct ClipboardShortcut: Equatable, Codable {
     private let modifierBits: UInt
     var modifiers: NSEvent.ModifierFlags { NSEvent.ModifierFlags(rawValue: modifierBits) }
     static let defaultQuickLook = ClipboardShortcut(keyCode: UInt32(kVK_Space), modifiers: [.control, .option])!
+    static let defaultDrawer = ClipboardShortcut(keyCode: UInt32(kVK_Space), modifiers: [.control, .option, .command])!
+    /// Used only to repair corrupt persisted collisions without taking Quick Look's chord.
+    static let alternateDrawer = ClipboardShortcut(keyCode: UInt32(kVK_Space), modifiers: [.control, .option, .shift, .command])!
     /// Fixed chords: the history window, and "paste the top item as plain text".
     static let history = ClipboardShortcut(keyCode: UInt32(kVK_ANSI_Backslash), modifiers: [.option, .command])!
     static let plainPaste = ClipboardShortcut(keyCode: UInt32(kVK_ANSI_V), modifiers: [.control, .command])!
 
     init?(keyCode: UInt32, modifiers: NSEvent.ModifierFlags) {
-        let flags = modifiers.intersection([.control, .option, .shift, .command])
+        let flags = modifiers.chord
         guard keyCode < 128, !Self.modifierKeys.contains(keyCode),
               !flags.intersection([.control, .option, .command]).isEmpty else { return nil }
         self.keyCode = keyCode

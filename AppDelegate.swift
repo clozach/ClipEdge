@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private let hotKey = ClipboardHotKey()
     private let historyHotKey = ClipboardHotKey()
     private let plainPasteHotKey = ClipboardHotKey()
+    private let drawerHotKey = ClipboardHotKey()
     private var historyController: ClipboardHistoryController!
     private let loginItemController = LoginItemController()
     private let revealSettings = ClipboardRevealSettings()
@@ -16,26 +17,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var updateController: UpdateController!
     private var updateMenu: UpdateMenu!
     private var publisher: PublishController!
+    private var sampleMenu: ClipboardSampleHistoryMenu!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        clipboardStore = ClipboardStore()
+        let source = ClipboardHistorySource.saved()
+        clipboardStore = ClipboardStore(pasteboard: .general, persistenceURL: source.url())
+        sampleMenu = ClipboardSampleHistoryMenu(store: clipboardStore, source: source)
         drawerController = ClipboardDrawerController(store: clipboardStore, activate: { NSApplication.shared.activate(ignoringOtherApps: true) })
+        drawerController.motionProfiles = { [revealSettings] in revealSettings.drawerMotion(for: $0) }
+        drawerController.sizes = { [revealSettings] in revealSettings.sizes }
         edgeController = EdgeController(drawerController: drawerController, settings: revealSettings)
         drawerController.onRevealSettings = { [weak self] in self?.settingsController.show() }
-        drawerController.revealSettingsWindow = settingsController.window
+        settingsController.onClose = { [weak self] in self?.drawerController.settingsDidClose() }
+        drawerController.applyAvailability(revealSettings.drawerAvailability)
+        drawerController.onVisibilityChange = { [weak self] in self?.refreshDrawerMenuItems() }
         historyController = ClipboardHistoryController(store: clipboardStore, paster: drawerController.paster,
                                                        previewService: drawerController.previewService)
         let magnets = revealSettings
         clipboardStore.attachesCopiesToCursor = { magnets.showsMagnet(for: .copy) }
         drawerController.pickupMagnet = { magnets.showsMagnet(for: .drawer) }
         historyController.pickupMagnet = { magnets.showsMagnet(for: .window) }
-        historyController.onError = { error in
-            let alert = NSAlert()
-            alert.messageText = "ClipEdge"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
-        }
         historyController.prepare = { [weak self] in self?.pasteTarget() }
+        historyController.sizes = { magnets.sizes }
+        drawerController.magnetController.previewScale = { magnets.sizes.previewScale }
+        ClipboardTileTooltip.shared.textScale = { magnets.sizes.textScale }
+        drawerController.magnetController.textScale = { magnets.sizes.textScale }
         updateController = UpdateController(environment: .live(
             support: UpdateController.Environment.defaultSupport,
             isBusy: { [weak self] in self?.isInUse ?? true },
@@ -50,8 +56,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.drawerController.quickLookNext()
         }
         settingsController.onShortcutChange = { [weak self] shortcut in self?.hotKey.register(shortcut: shortcut) ?? -1 }
+        settingsController.onDrawerShortcutChange = { [weak self] shortcut in
+            guard let self else { return -1 }
+            let status = self.drawerHotKey.register(shortcut: shortcut)
+            if !self.revealSettings.drawerAvailability.drawerEnabled { self.drawerHotKey.unregister() }
+            return status
+        }
+        settingsController.onRecordingChange = { [weak self] recording in self?.setShortcutRecording(recording) }
         NotificationCenter.default.addObserver(self, selector: #selector(refreshShortcutHints), name: ClipboardRevealSettings.didChange, object: revealSettings)
         NotificationCenter.default.addObserver(self, selector: #selector(releaseMagnetsTurnedOff), name: ClipboardRevealSettings.didChange, object: revealSettings)
+        NotificationCenter.default.addObserver(self, selector: #selector(applyDrawerSettings), name: ClipboardRevealSettings.didChange, object: revealSettings)
         refreshShortcutHints()
         let hotKeyStatus = hotKey.register(shortcut: revealSettings.quickLookShortcut)
         if hotKeyStatus != noErr {
@@ -64,7 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard let self, !self.settingsController.isRecordingShortcut else { return }
             self.historyController.hotKeyPressed()
         }
-        plainPasteHotKey.onPress = { [weak self] in self?.pasteTopAsPlainText() }
+        plainPasteHotKey.onPress = { [weak self] in
+            guard let self, !self.settingsController.isRecordingShortcut else { return }
+            self.pasteTopAsPlainText()
+        }
         let unavailable = [(ClipboardShortcut.history, historyHotKey, "Clipboard History"),
                            (ClipboardShortcut.plainPaste, plainPasteHotKey, "Paste Top Item as Plain Text")]
             .filter { $0.1.register(shortcut: $0.0) != noErr }
@@ -75,6 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 "\nAnother app may already use it. The ClipEdge menu bar item still offers both commands."
             alert.runModal()
         }
+        drawerHotKey.onPress = { [weak self] in
+            guard let self, !self.settingsController.isRecordingShortcut else { return }
+            self.showClipboard()
+        }
+        applyDrawerSettings()
 
         clipboardStore.start()
         edgeController.start()
@@ -95,6 +117,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         drawerController.onShow = { [weak self] in self?.publisher.refresh() }
         historyController.onShow = { [weak self] in self?.publisher.refresh() }
+        // The same maintainer build that can publish can ask for a better preview:
+        // its brief goes into the vault the publisher tool lives in, and nowhere else.
+        let asker = PublishCapability.resolve(info: Bundle.main.infoDictionary ?? [:])
+            .flatMap { ClipboardPreviewBriefVault(publisherTool: $0.tool) }
+            .map { ClipboardPreviewAsker(vault: $0) }
+        drawerController.previewAsker = asker
+        historyController.previewAsker = asker
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -146,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         appMenu.addItem(updateMenu.makeMenuItem())
         appMenu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Save History & Quit ClipEdge", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit ClipEdge", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         appMenu.addItem(quitItem)
         NSApplication.shared.mainMenu = mainMenu
@@ -160,6 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         let menu = NSMenu()
+        // Shown only while the sample history is: the way back is never hidden.
+        menu.addItem(sampleMenu.banner)
         let showItem = NSMenuItem(title: "Show Clipboard", action: #selector(showClipboard), keyEquivalent: "")
         showItem.target = self
         menu.addItem(showItem)
@@ -177,10 +208,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let clearItem = NSMenuItem(title: "Clear History", action: #selector(clearHistory), keyEquivalent: "")
         clearItem.target = self
         menu.addItem(clearItem)
+        // The easter egg: holding Option turns Clear History and Save History Now into these two.
+        menu.addItem(sampleMenu.addItem)
 
         let saveItem = NSMenuItem(title: "Save History Now", action: #selector(saveHistory), keyEquivalent: "")
         saveItem.target = self
         menu.addItem(saveItem)
+        menu.addItem(sampleMenu.toggleItem)
         menu.addItem(.separator())
 
         menu.addItem(loginItemController.makeMenuItem())
@@ -195,17 +229,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         menu.addItem(hint)
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(title: "Save History & Quit ClipEdge", action: #selector(quit), keyEquivalent: "q")
+        let quitItem = NSMenuItem(title: "Quit ClipEdge", action: #selector(quit), keyEquivalent: "q")
         quitItem.target = self
         menu.addItem(quitItem)
         statusItem.menu = menu
+        sampleMenu.attach(to: statusItem)
     }
 
     @objc private func showClipboard() {
-        if drawerController.isVisible {
-            drawerController.hide(animated: true)
-        } else {
-            drawerController.showAtTab()
+        guard revealSettings.drawerAvailability.drawerEnabled else { return }
+        if !drawerController.isVisible { historyController.close() }
+        drawerController.toggleFromCommand()
+    }
+
+    @objc private func applyDrawerSettings() {
+        drawerController.applyAvailability(revealSettings.drawerAvailability)
+        // Sizes: the drawer and the window follow at once; Quick Look reads the preview size as it opens.
+        drawerController.applySizes()
+        historyController.applySizes()
+        if revealSettings.drawerAvailability.drawerEnabled {
+            let status = drawerHotKey.register(shortcut: revealSettings.drawerShortcut)
+            if status != noErr {
+                let alert = NSAlert()
+                alert.messageText = "Show / Hide Clipboard shortcut is unavailable"
+                alert.informativeText = "Another app may already use \(revealSettings.drawerShortcut.displayString). Choose a different combination in ClipEdge Settings. The menu still offers Show Clipboard. Registration status: \(status)."
+                alert.runModal()
+            }
+        } else { drawerHotKey.unregister() }
+        refreshDrawerMenuItems()
+    }
+
+    /// Registered global chords consume their keys before a recorder can see them.
+    /// Release all four only for the recording interval; restore accepted settings
+    /// on completion, Escape, focus loss or closing Settings.
+    private func setShortcutRecording(_ recording: Bool) {
+        if recording {
+            for key in [hotKey, historyHotKey, plainPasteHotKey, drawerHotKey] { key.unregister() }
+            return
+        }
+        var commands = [(hotKey, revealSettings.quickLookShortcut, "Quick Look"),
+                        (historyHotKey, ClipboardShortcut.history, "Clipboard History"),
+                        (plainPasteHotKey, ClipboardShortcut.plainPaste, "Paste Top Item as Plain Text")]
+        if revealSettings.drawerAvailability.drawerEnabled {
+            commands.append((drawerHotKey, revealSettings.drawerShortcut, "Show / Hide Clipboard"))
+        }
+        let unavailable = commands.filter { $0.0.register(shortcut: $0.1) != noErr }
+        if !unavailable.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "A ClipEdge shortcut is unavailable"
+            alert.informativeText = unavailable.map { "\($0.2) ← \($0.1.displayString)" }.joined(separator: "\n") +
+                "\nAnother app may now use it. ClipEdge's menu still offers these commands."
+            alert.runModal()
+        }
+    }
+
+    /// Both Show Clipboard items read Hide while the drawer is open, however it opened.
+    static func drawerMenuTitle(drawerVisible: Bool, shortcut: ClipboardShortcut) -> String {
+        "\(drawerVisible ? "Hide" : "Show") Clipboard  \(shortcut.displayString)"
+    }
+
+    private func refreshDrawerMenuItems() {
+        let title = Self.drawerMenuTitle(drawerVisible: drawerController.isVisible, shortcut: revealSettings.drawerShortcut)
+        for menu in [NSApplication.shared.mainMenu?.items.first?.submenu, statusItem?.menu] {
+            if let item = menu?.items.first(where: { $0.action == #selector(showClipboard) }) {
+                item.title = title
+                item.isEnabled = revealSettings.drawerAvailability.drawerEnabled
+            }
         }
     }
 
@@ -251,6 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showClipboard) { return revealSettings.drawerAvailability.drawerEnabled }
         if menuItem.action == #selector(configurePasteDetection) {
             // Read the running build's actual access, rather than assuming a
             // previously accepted prompt still applies after a local rebuild.

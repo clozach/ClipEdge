@@ -41,8 +41,15 @@ enum ClipboardSendTo {
         case .figma(let copy): return [copy.link]
         // Only an address an HTML-only copy reads as, never the HTML itself.
         case .html(let html): return html.address.map { [$0] } ?? []
-        case .text, .file, .other: return []
+        // App data has no file an app would open; it can only be pasted back.
+        case .text, .file, .appData, .other: return []
         }
+    }
+
+    /// Where an entry can go, for either container's Send to: nil when nowhere, which beeps.
+    static func targets(for entry: ClipboardEntry, materializer: ClipboardMaterializer, sources: Sources) -> [ClipboardSendTarget]? {
+        let targets = targets(opening: openItems(for: entry, materializer: materializer), sources: sources)
+        return targets.isEmpty ? nil : targets
     }
 
     /// Apps that can open every item, best first, then running apps front to back.

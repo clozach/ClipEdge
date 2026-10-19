@@ -36,7 +36,7 @@ final class ClipboardPublishControl: NSButton {
         let resized = changed || title != presentation.title || isEnabled != presentation.isEnabled
         title = presentation.title
         toolTip = presentation.help
-        setAccessibilityLabel(presentation.title)
+        setAccessibilityLabel(presentation.title.replacingOccurrences(of: "⇧⌘P", with: "Shift-Command-P"))
         setAccessibilityHelp(presentation.help)
         setAccessibilityValue(presentation.percent.map { "\($0) percent" })
         // Once per whole percent: redraws within the same percent stay silent.
@@ -98,8 +98,8 @@ final class ClipboardPublishControl: NSButton {
     /// Explicit routing also works when another app owns the menu bar and the
     /// nonactivating ClipEdge panel's search field owns the keyboard.
     @discardableResult func handleKey(_ event: NSEvent) -> Bool {
-        guard !isHidden, event.modifierFlags.intersection([.command, .shift, .option, .control]) == [.command, .shift],
-              event.charactersIgnoringModifiers?.lowercased() == "p" else { return false }
+        guard !isHidden, ClipboardChord(key: .letter("p", position: 35),
+                                      modifiers: .exactly([.command, .shift])).matches(event) else { return false }
         if isEnabled && !event.isARepeat { performClick(nil) }
         return true
     }

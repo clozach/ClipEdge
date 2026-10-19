@@ -10,6 +10,9 @@ enum ClipboardKind: Equatable {
     case figma(ClipboardFigmaCopy)
     /// A copy with HTML and no plain text; this is the text it reads as.
     case html(ClipboardHTMLText)
+    /// An app's own format and nothing else readable; only that app can paste it.
+    case appData(ClipboardAppData)
+    /// Known formats that read as nothing (HTML that strips to nothing).
     case other
     var iconName: String {
         switch self {
@@ -18,6 +21,7 @@ enum ClipboardKind: Equatable {
         case .file: return "doc"
         case .link: return "link"
         case .figma: return "square.3.layers.3d"
+        case .appData: return "shippingbox"
         case .other: return "square.on.square"
         }
     }
@@ -28,20 +32,24 @@ struct ClipboardPayload {
 }
 
 enum ClipboardFlavors {
-    /// Clipboard flavors treated as a picture.
-    static let images: Set<NSPasteboard.PasteboardType> = [
-        .png, .tiff, .pdf, NSPasteboard.PasteboardType("public.jpeg"), NSPasteboard.PasteboardType("com.compuserve.gif")
-    ]
+    /// A flavor read as a picture: PDF, or any format of image, however an
+    /// app names it (Keynote's TIFF, a browser's WebP), when NSImage decodes it.
+    static func isPicture(_ type: NSPasteboard.PasteboardType) -> Bool {
+        type == .pdf || UTType(type.rawValue)?.conforms(to: .image) == true
+    }
     /// The page a Chromium browser copied from. Its query can carry tokens, so
     /// only its host is ever shown.
     static let sourceURL = NSPasteboard.PasteboardType("org.chromium.source-url")
 
     /// The text of a rich-text flavor, RTF else RTFD, for a copy without plain text.
+    /// A picture in it is an attachment character, which no one can read or want pasted.
     static func richText(in values: [(type: NSPasteboard.PasteboardType, data: Data)]) -> String? {
+        let words: String?
         if let data = values.first(where: { $0.type == .rtf })?.data,
-           let text = NSAttributedString(rtf: data, documentAttributes: nil)?.string { return text }
-        if let data = values.first(where: { $0.type == .rtfd })?.data { return NSAttributedString(rtfd: data, documentAttributes: nil)?.string }
-        return nil
+           let text = NSAttributedString(rtf: data, documentAttributes: nil)?.string { words = text }
+        else if let data = values.first(where: { $0.type == .rtfd })?.data { words = NSAttributedString(rtfd: data, documentAttributes: nil)?.string }
+        else { words = nil }
+        return words?.replacingOccurrences(of: String(Character(UnicodeScalar(NSTextAttachment.character)!)), with: "")
     }
     /// "claude.ai" for a copy from https://claude.ai/…; nil for app:// and other schemes.
     static func sourceSite(in values: [(type: NSPasteboard.PasteboardType, data: Data)]) -> String? {
@@ -67,10 +75,16 @@ final class ClipboardEntry {
     var kind: ClipboardKind
     /// A Finder item starts with a type icon; inspection supplies its real preview.
     var thumbnail: NSImage?
+    /// The app's own format this copy carries, whatever else it reads as (a
+    /// picture, text); nil for a copy of known formats only. Read from the
+    /// formats alone, so it always agrees with them.
+    let appData: ClipboardAppData?
     var metadata = ClipboardMetadata()
     var searchIndex: ClipboardSearchState = .ready("")
     var searchGeneration: UInt64 = 0
     var recognizedText: String { if case .ready(let text) = searchIndex { return text }; return "" }
+    /// Every format's bytes: what the item takes on disk, against the storage budget.
+    var byteCount: Int64 { payloads.reduce(0) { $0 + $1.values.reduce(0) { $0 + Int64($1.data.count) } } }
 
     init(fingerprint: String, capturedAt: Date, payloads: [ClipboardPayload], title: String,
          detail: String, kind: ClipboardKind, thumbnail: NSImage?) {
@@ -81,6 +95,7 @@ final class ClipboardEntry {
         self.detail = detail
         self.kind = kind
         self.thumbnail = thumbnail
+        appData = ClipboardAppData(types: payloads.flatMap(\.values).map(\.type.rawValue))
         metadata = .immediate(for: self)
     }
 
@@ -109,20 +124,29 @@ final class ClipboardEntry {
     /// The quiet line beside a title: facts and paths, or the summary's own detail.
     var edgeText: String { metadata.isEmpty ? detail : metadata.compact }
     /// What a plain-text paste inserts: the entry's text, else its facts and paths.
-    /// Figma layers lend their text, else their link; an HTML-only copy its text, read in full.
+    /// Figma layers lend their text, else their link; an HTML-only copy its text, read
+    /// in full; app data with nothing else readable, its name and formats.
     var plainTextForPaste: String {
         switch kind {
         case .figma(let copy): return copy.carriedText ?? copy.link.absoluteString
         case .html(let html):
             guard !html.isComplete, let data = values.first(where: { $0.type == .html })?.data else { return html.text }
             return ClipboardHTMLText.readable(data, limit: .max)
+        case .appData(let data): return data.pasteText
         default: return plainText ?? metadata.pasteText
         }
     }
+    /// Whether a plain-text paste inserts anything, as `plainTextForPaste` is not empty, without
+    /// reading an HTML-only copy in full: its summary is never empty, and the rest only adds to it.
+    var hasPlainTextForPaste: Bool {
+        if case .html = kind { return true }
+        return !plainTextForPaste.isEmpty
+    }
     var dateTimeStamp: String { Self.stamp.string(from: capturedAt) }
     var fullDateTimeStamp: String { Self.fullStamp.string(from: capturedAt) }
-    /// What search reads: the title, detail and text, image text, the date, and
-    /// for Figma layers the file, editor and site even where the title is cut short.
+    /// What search reads: the title, detail and text, image text, the date, for
+    /// Figma layers the file, editor and site even where the title is cut short,
+    /// and for app data its name and formats.
     var searchText: String {
         var parts = [title, detail, plainText ?? "", recognizedText, fullDateTimeStamp]
         switch kind {
@@ -130,6 +154,7 @@ final class ClipboardEntry {
         case .figma(let copy): parts += copy.searchTerms
         default: break
         }
+        if let appData { parts += appData.searchTerms }
         return parts.joined(separator: "\n")
     }
     func matches(_ query: String) -> Bool {

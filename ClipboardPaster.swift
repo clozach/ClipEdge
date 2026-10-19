@@ -50,7 +50,17 @@ final class ClipboardPaster {
 
     /// One paste of the clipboard's text alone; the full item returns afterwards.
     func pasteClipboardAsPlainText(into target: Target?) {
-        guard let target, let loan = store.beginPlainTextPaste() else { environment.failed(); return }
+        pastePlain(nil, into: target)
+    }
+
+    /// One paste of `text` alone (a selection's Paste as text), lent to the clipboard as a plain
+    /// paste is: it never becomes a history entry, and what the clipboard held returns afterwards.
+    func pasteText(_ text: String, into target: Target?) {
+        pastePlain(text, into: target)
+    }
+
+    private func pastePlain(_ text: String?, into target: Target?) {
+        guard let target, let loan = store.beginPlainTextPaste(lending: text) else { environment.failed(); return }
         deliver(to: target) { [store, environment] _ in
             // The destination reads the clipboard after it receives Command-V.
             environment.schedule(0.45) { store.endPlainTextPaste(loan) }

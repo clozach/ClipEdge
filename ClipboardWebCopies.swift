@@ -1,7 +1,8 @@
 import AppKit
 
 /// Made-up copies shaped like those a web page leaves on the clipboard: Figma
-/// layers, HTML-only text, rich text without plain text, a page's address.
+/// layers, HTML-only text, rich text without plain text, a page's address;
+/// and app data, an app's own format with or without a picture.
 /// Every key, name and word is invented; the demo (--demo-web-copies) and the
 /// tests share them. Never put a real clipboard capture here.
 enum ClipboardWebCopies {
@@ -45,6 +46,37 @@ enum ClipboardWebCopies {
 
     static let plainHTML = "<p>ClipEdge <b>fixture</b> &amp; HTML-only copy</p><script>ignored()</script><style>.x{}</style>"
 
+    // MARK: App data
+
+    /// A made-up app's own format, shaped like Sketch's; its bytes mean nothing.
+    static let sketchLike = NSPasteboard.PasteboardType("com.clipedge.fixture.sketchlike")
+    /// Apple's own iWork type name beside a TIFF, as Keynote and Pages copy.
+    static let iWorkLike = NSPasteboard.PasteboardType("com.apple.iWork.pasteboard")
+    private static let appBytes = Data("clipedge-fixture-app-data".utf8) + Data(repeating: 0x5A, count: 40)
+    /// One app format and nothing else: app data with no picture.
+    static let appDataOnly: Values = [(sketchLike, appBytes)]
+    /// The same, with a PNG beside it: a picture that is also app data.
+    static let appDataWithPicture: Values = sorted([(sketchLike, appBytes), (.png, picture.png)])
+    /// An iWork-style copy with a TIFF, as Keynote leaves one.
+    static let iWorkWithPicture: Values = sorted([(iWorkLike, appBytes), (.tiff, picture.tiff)])
+    /// Only what a browser and the pasteboard add: nothing to read and no app's own format.
+    static let bookkeepingOnly: Values = sorted([
+        (NSPasteboard.PasteboardType("com.apple.WebKit.custom-pasteboard-data"), Data([0])),
+        (NSPasteboard.PasteboardType("com.apple.linkpresentation.metadata"), Data([0])),
+        (ClipboardFlavors.sourceURL, Data("https://example.com/fixture-page".utf8)), (frameToken, Data(repeating: 9, count: 24))
+    ])
+    /// A small amber picture with a dark bar, as PNG and TIFF, drawn without a window.
+    static let picture: (png: Data, tiff: Data) = {
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 96, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor(red: 0.96, green: 0.75, blue: 0.35, alpha: 1).setFill(); NSBezierPath(rect: NSRect(x: 0, y: 0, width: 96, height: 64)).fill()
+        NSColor(red: 0.25, green: 0.2, blue: 0.1, alpha: 1).setFill(); NSBezierPath(rect: NSRect(x: 12, y: 26, width: 72, height: 12)).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        return (rep.representation(using: .png, properties: [:])!, rep.representation(using: .tiff, properties: [:])!)
+    }()
+
     /// The demo's copies, oldest first, each named for what it shows.
     static let demo: [(name: String, values: Values)] = [
         ("Figma Design layer", figma()),
@@ -59,6 +91,10 @@ enum ClipboardWebCopies {
         ("HTML-only color", html("<span>#F6C0A6</span>")),
         ("HTML with nothing to read", html("<span style=\"color:red\"></span><!-- nothing -->")),
         ("Rich text only", rtf("ClipEdge fixture rich note")),
+        ("App data only", appDataOnly),
+        ("App data with a picture", appDataWithPicture),
+        ("iWork-style copy with a picture", iWorkWithPicture),
+        ("Bookkeeping types only", bookkeepingOnly),
         ("Text from a chat page", chatReply)
     ]
 

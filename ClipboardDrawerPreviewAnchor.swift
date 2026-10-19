@@ -5,10 +5,13 @@ struct ClipboardDrawerPreviewAnchor: Equatable {
     let drawer: NSRect
     let screen: NSRect
     let edge: ClipboardDockEdge
+    /// Quick Look's size beside the drawer at a preview size of 100%.
     static let preferredSize = NSSize(width: 640, height: 520)
     private static let gap: CGFloat = 8
+    /// Quick Look's size here: `preferredSize` at the preview size (Settings, 2026-10-16), as the space allows.
+    var previewScale: CGFloat = 1
 
-    var frame: NSRect { frame(fitting: Self.preferredSize) }
+    var frame: NSRect { frame(fitting: NSSize(width: Self.preferredSize.width * previewScale, height: Self.preferredSize.height * previewScale)) }
 
     /// A smaller companion (Send to) takes the same side, level with one row.
     func frame(fitting preferred: NSSize, centeredAtY rowY: CGFloat? = nil) -> NSRect {

@@ -1,184 +1,108 @@
 import AppKit
 import QuartzCore
 
-enum ClipboardBrowserTab: Int, CaseIterable {
-    case all, images, text
-    var title: String { switch self { case .all: return "All"; case .images: return "Images"; case .text: return "Text" } }
-    func includes(_ entry: ClipboardEntry) -> Bool {
-        switch self {
-        case .all: return true
-        case .images: return entry.isImage
-        case .text:
-            // Figma layers are text only when they carry it; their link alone is a way to paste them, so they stay under All.
-            switch entry.kind {
-            case .text, .link, .html: return true
-            case .figma(let copy): return copy.carriedText != nil
-            default: return false
-            }
-        }
-    }
-    /// One filter for the drawer and the history window: this tab's entries
-    /// that match every search word.
-    func visible(_ entries: [ClipboardEntry], query: String) -> [ClipboardEntry] {
-        entries.filter { includes($0) && $0.matches(query) }
-    }
-}
-
-/// What the image-text reader is doing, for the line beside the item count.
-enum ClipboardIndexingNote: Equatable {
-    case reading, failed(String)
-    init?(_ entries: [ClipboardEntry]) {
-        if entries.contains(where: { if case .pending = $0.searchIndex { return true }; return false }) { self = .reading; return }
-        guard let message = entries.compactMap({ entry -> String? in
-            if case .failed(let message) = entry.searchIndex { return message }; return nil
-        }).first else { return nil }
-        self = .failed(message)
-    }
-    var text: String { self == .reading ? "Reading image text…" : "Some image text is unavailable" }
-    var help: String? { if case .failed(let message) = self { return message }; return nil }
-}
-
-final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
-    /// ⌘F from the tiles: the keyboard goes to the search, its text selected so typing replaces it.
-    func focusSearch() {
-        window?.makeFirstResponder(search)
-        search.currentEditor()?.selectAll(nil)
-        onInteraction?()
-    }
-
-    let tabs = NSSegmentedControl(labels: ClipboardBrowserTab.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
-    let search = NSSearchField()
+/// The drawer's content: the shared list (tabs, Select, search, count line and cards) laid out
+/// down the drawer, with the image zoom.
+final class ClipboardBrowserView: NSView {
+    /// The drawer's cards hold its keyboard; its tabs name their key in a tooltip too; the image-text
+    /// note takes the Quick Look hint's place.
+    let list: ClipboardBrowserList
+    var keymap: ClipboardKeymap { list.keymap }
+    var tabs: ClipboardTabBar { list.tabs }
+    var search: ClipboardSearchField { list.search }
+    var canvas: ClipboardCanvas { list.canvas }
+    private var countLine: ClipboardCountLine { list.countLine }
+    var selectButton: ClipboardSelectButton { list.selectButton }
     let zoom = NSSlider(value: 2, minValue: 1, maxValue: 3, target: nil, action: nil)
-    let canvas = ClipboardCanvas()
     private let scroll = NSScrollView()
-    private let count = NSTextField(labelWithString: "")
-    private let empty = NSTextField(wrappingLabelWithString: "Copy something to begin")
-    private let shortcut = NSTextField(labelWithString: "Quick Look  ⌃⌥Space")
     var quickLookHint = "⌃⌥Space" { didSet { rebuild() } }
     private let zoomLabels = ["3 across", "2", "1"].map { NSTextField(labelWithString: $0) }
-    private var entries: [ClipboardEntry] = []
     private var attachedID: UUID?
-    private struct TileKey: Hashable { let id: UUID; let imageOnly: Bool }
-    private var cachedTiles: [TileKey: ClipboardTile] = [:]
     private var layoutTargets: [ObjectIdentifier: NSRect] = [:]
     private var pendingPromotion: UUID?
-    var onInteraction: (() -> Void)?
-    var onHover: ((ClipboardEntry) -> Void)?
+    var onInteraction: (() -> Void)? { get { list.onInteraction } set { list.onInteraction = newValue } }
+    /// The drawer's answer to an action on an entry; the search and the tabs are the list's own.
+    var perform: (ClipboardBrowserAction, ClipboardEntry?) -> Bool { get { list.perform } set { list.perform = newValue } }
+    var onHover: ((ClipboardEntry) -> Void)? { get { list.onHover } set { list.onHover = newValue } }
     var onVisibleEntriesChange: (() -> Void)?
-    var onClear: (() -> Void)?
-    let clear = NSButton(title: "Clear…", target: nil, action: nil)
-    var currentTab: ClipboardBrowserTab { ClipboardBrowserTab(rawValue: tabs.selectedSegment) ?? .all }
+    /// Where Tab goes after the drawer's last control (Select): the header's gear, given by the
+    /// drawer; the search when nothing is.
+    weak var keyLoopExit: NSView? { didSet { refreshKeyLoop() } }
+    var currentTab: ClipboardBrowserTab { list.tab }
     var imagesOnly: Bool { currentTab == .images }
     var columns: Int { imagesOnly ? 4 - Int(zoom.doubleValue.rounded()) : 1 }
-    var visibleEntries: [ClipboardEntry] { currentTab.visible(entries, query: search.stringValue) }
+    var visibleEntries: [ClipboardEntry] { list.visibleEntries }
     override var isFlipped: Bool { true }
 
-    override init(frame frameRect: NSRect) {
+    override convenience init(frame frameRect: NSRect) { self.init(frame: frameRect, keymap: .drawer) }
+    init(frame frameRect: NSRect, keymap: ClipboardKeymap) {
+        list = ClipboardBrowserList(keymap: keymap, home: .tiles, tooltips: .keys, indexing: .ownLabel)
         super.init(frame: frameRect)
-        tabs.selectedSegment = 0
-        tabs.target = self; tabs.action = #selector(filterChanged)
-        tabs.setAccessibilityLabel("Clipboard view")
-        search.placeholderString = "Search clipboard and image text  ⌘F"
-        search.delegate = self
-        search.sendsSearchStringImmediately = true
-        search.setAccessibilityLabel("Search clipboard and image text")
+        list.onFilterChange = { [weak self] _ in self?.filterChanged() }
         zoom.numberOfTickMarks = 3
         zoom.allowsTickMarkValuesOnly = true
         zoom.isContinuous = true
         zoom.target = self; zoom.action = #selector(zoomChanged)
         zoom.setAccessibilityLabel("Image size: 3, 2, or 1 across")
-        clear.target = self; clear.action = #selector(clearHistory)
-        clear.bezelStyle = .inline
-        count.font = .systemFont(ofSize: 11)
-        count.textColor = .secondaryLabelColor
-        shortcut.font = .systemFont(ofSize: 11, weight: .medium)
-        shortcut.textColor = .secondaryLabelColor
         zoomLabels.forEach { $0.font = .systemFont(ofSize: 10); $0.textColor = .secondaryLabelColor; addSubview($0) }
         zoomLabels[1].alignment = .center
         zoomLabels[2].alignment = .right
-        empty.alignment = .center
-        empty.textColor = .secondaryLabelColor
         scroll.documentView = canvas
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        [tabs, search, zoom, scroll, count, empty, shortcut, clear].forEach(addSubview)
-        canvas.onNavigate = { [weak self] in self?.onInteraction?() }
-        canvas.onFind = { [weak self] in self?.focusSearch() }
+        [tabs, selectButton, search, zoom, scroll, countLine.count, countLine.storage, countLine.empty, countLine.note].forEach(addSubview)
         search.nextKeyView = canvas
         canvas.nextKeyView = tabs
-        tabs.nextKeyView = zoom
-        zoom.nextKeyView = clear
-        clear.nextKeyView = search
+        refreshKeyLoop()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     deinit { NotificationCenter.default.removeObserver(self) }
 
     func update(entries: [ClipboardEntry], attachedID: UUID?) {
-        self.entries = entries
+        list.entries = entries
         self.attachedID = attachedID
         rebuild(animatePromotion: true)
     }
-    @objc private func filterChanged() { rebuild(); scroll.contentView.scroll(to: .zero) }
+    private func filterChanged() { rebuild(); scroll.contentView.scroll(to: .zero) }
+    /// F or ⌘F from the cards: the keyboard goes to the search, its text selected so typing replaces it.
+    func focusSearch() { list.focusSearch(selectingAll: true) }
+    /// A tab chosen by its number key; the keyboard stays with the cards, and the card they act on
+    /// stays in view, as zooming keeps it.
+    func choose(_ tab: ClipboardBrowserTab) { list.choose(tab) }
     @objc private func zoomChanged() { layoutTiles(); canvas.selected.map { canvas.choose($0.entry.id) } }
-    @objc private func clearHistory() { onClear?() }
     @objc private func scrolled() { ClipboardTileTooltip.shared.hide(); window?.invalidateCursorRects(for: canvas) }
-    func controlTextDidChange(_ obj: Notification) { filterChanged() }
 
     private func rebuild(animatePromotion: Bool = false) {
         let previousTiles = canvas.tiles
         let visible = visibleEntries
         pendingPromotion = animatePromotion && previousTiles.first?.imageOnly == imagesOnly
             ? Self.promotedEntry(from: previousTiles.map { $0.entry.id }, to: visible.map(\.id)) : nil
-        let retained = Set(entries.map(\.id))
-        cachedTiles = cachedTiles.filter { retained.contains($0.key.id) }
-        canvas.tiles = visible.map { entry in
-            let key = TileKey(id: entry.id, imageOnly: imagesOnly)
-            let tile = cachedTiles[key] ?? makeTile(entry)
-            cachedTiles[key] = tile
-            tile.refreshEntryPresentation()
-            if tile.superview !== canvas { canvas.addSubview(tile) }
-            return tile
-        }
+        let next = ClipboardHint.key(ClipboardKeyLabel(shown: quickLookHint, spoken: quickLookHint))
+        countLine.resting = ("Quick Look  " + (keymap.key(.quickLook).map { .key($0) + " · " } ?? "") + next,
+                             "\(keymap.help("Quick Look hovered item", .quickLook))\nNext clipboard item ← \(quickLookHint)")
+        list.showTiles(style: imagesOnly ? .image : .row, liftedID: attachedID)
         let displayed = Set(canvas.tiles.map(ObjectIdentifier.init))
-        previousTiles.filter { !displayed.contains(ObjectIdentifier($0)) }.forEach { $0.removeFromSuperview() }
         layoutTargets = layoutTargets.filter { displayed.contains($0.key) }
         if let id = pendingPromotion, let promoted = canvas.tiles.first(where: { $0.entry.id == id }) {
             canvas.addSubview(promoted, positioned: .above, relativeTo: nil)
         }
-        canvas.reconcile(liftedID: attachedID)
-        let note = ClipboardIndexingNote(entries)
-        shortcut.stringValue = note?.text ?? "Quick Look  Space · \(quickLookHint)"
-        shortcut.toolTip = note?.help ?? "Quick Look hovered item ← Space\nNext clipboard item ← \(quickLookHint)"
-        count.stringValue = "\(canvas.tiles.count) of \(entries.count) items"
-        empty.stringValue = entries.isEmpty ? "Copy something to begin" : "No matching items"
-        empty.isHidden = !canvas.tiles.isEmpty
         zoom.isHidden = !imagesOnly
         zoomLabels.forEach { $0.isHidden = !imagesOnly }
-        tabs.nextKeyView = imagesOnly ? zoom : clear
+        refreshKeyLoop()
         needsLayout = true
         layoutSubtreeIfNeeded()
         if let id = canvas.selectedID { canvas.choose(id, reveal: false) }
         if previousTiles.map({ $0.entry.id }) != visible.map(\.id) { onVisibleEntriesChange?() }
     }
-    private func makeTile(_ entry: ClipboardEntry) -> ClipboardTile {
-        let tile = ClipboardTile(entry: entry, imageOnly: imagesOnly)
-        tile.wantsLayer = true
-        tile.onPick = { [weak self] in
-            guard let self else { return }
-            self.window?.makeFirstResponder(self.canvas)
-            self.canvas.choose(entry.id, reveal: false)
-            self.canvas.onPick?(entry)
-        }
-        tile.onHover = { [weak self] in
-            self?.canvas.choose(entry.id, reveal: false)
-            self?.onHover?(entry)
-        }
-        tile.onDelete = { [weak self] in self?.canvas.onDelete?(entry) }
-        tile.onOpen = { [weak self] in self?.canvas.onOpen?(entry) }
-        return tile
+    /// search → cards → tabs → (zoom, under Images) → Select → `keyLoopExit` → … → search, as
+    /// Clear… sat in it before Select took its place.
+    private func refreshKeyLoop() {
+        tabs.nextKeyView = imagesOnly ? zoom : selectButton
+        zoom.nextKeyView = selectButton
+        selectButton.nextKeyView = keyLoopExit ?? search
     }
     /// Only a move-to-front qualifies. Filtering, insertion and OCR refreshes don't animate.
     static func promotedEntry(from previous: [UUID], to current: [UUID]) -> UUID? {
@@ -190,18 +114,36 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
     override func layout() {
         super.layout()
         let w = bounds.width
-        tabs.frame = NSRect(x: 16, y: 17, width: w - 104, height: 27)
-        clear.frame = NSRect(x: w - 81, y: 19, width: 65, height: 24)
-        search.frame = NSRect(x: 16, y: 54, width: w - 32, height: 26)
-        shortcut.frame = NSRect(x: 16, y: 88, width: w - 130, height: 18)
-        count.frame = NSRect(x: w - 110, y: 88, width: 94, height: 18)
-        zoom.frame = NSRect(x: 23, y: 116, width: w - 46, height: 21)
-        zoomLabels[0].frame = NSRect(x: 23, y: 139, width: 80, height: 18)
-        zoomLabels[1].frame = NSRect(x: w / 2 - 40, y: 139, width: 80, height: 18)
-        zoomLabels[2].frame = NSRect(x: w - 103, y: 139, width: 80, height: 18)
-        let top: CGFloat = imagesOnly ? 166 : 116
+        // Select at the tabs' right, where Clear… was, as wide as Done or Select needs, level with
+        // the tabs' middle; the tabs as tall as their size draws them, everything below after them.
+        // A drawer dragged too narrow for both (2026-10-16) puts Select under the search, at the end
+        // of the count line, as the ⌥⌘\ window does, so the tabs keep their whole names and keys.
+        let select = selectButton.preferredWidth
+        let tabsHeight = tabs.intrinsicContentSize.height
+        let besideTabs = tabs.naturalWidth + 8 + select <= w - 32
+        let tabsWidth = max(0, besideTabs ? w - 32 - select - 8 : w - 32)
+        tabs.fill(width: tabsWidth)
+        tabs.frame = NSRect(x: 16, y: 17, width: max(tabsWidth, tabs.fittingSize.width), height: tabsHeight)
+        search.frame = NSRect(x: 16, y: tabs.frame.maxY + 10, width: w - 32, height: 26)
+        let countY = search.frame.maxY + 8
+        selectButton.frame = besideTabs ? NSRect(x: w - 16 - select, y: round(tabs.frame.midY - 12), width: select, height: 24)
+            : NSRect(x: w - 16 - select, y: countY - 3, width: select, height: 24)
+        let countRight = besideTabs ? w - 16 : selectButton.frame.minX - 8
+        let countWidth = max(94, ceil(countLine.count.fittingSize.width))
+        countLine.count.frame = NSRect(x: countRight - countWidth, y: countY, width: countWidth, height: 18)
+        // The floppy warning, when it shows, just before the count's words.
+        countLine.storage.frame = NSRect(x: countLine.count.frame.minX - countLine.storageWidth, y: countY, width: ClipboardStorageWarning.side, height: ClipboardStorageWarning.side)
+        let noteWidth = max(0, countLine.count.frame.minX - countLine.storageWidth - 4 - 16)
+        let noteHeight = max(18, ceil(countLine.note.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: noteWidth, height: 1_000)).height ?? 18))
+        countLine.note.frame = NSRect(x: 16, y: countY, width: noteWidth, height: noteHeight)
+        let below = countY + 10 + noteHeight
+        zoom.frame = NSRect(x: 23, y: below, width: w - 46, height: 21)
+        zoomLabels[0].frame = NSRect(x: 23, y: below + 23, width: 80, height: 18)
+        zoomLabels[1].frame = NSRect(x: w / 2 - 40, y: below + 23, width: 80, height: 18)
+        zoomLabels[2].frame = NSRect(x: w - 103, y: below + 23, width: 80, height: 18)
+        let top: CGFloat = imagesOnly ? below + 50 : below
         scroll.frame = NSRect(x: 12, y: top, width: w - 24, height: max(0, bounds.height - top - 12))
-        empty.frame = NSRect(x: 24, y: top + 50, width: w - 48, height: 50)
+        countLine.empty.frame = NSRect(x: 24, y: top + 50, width: w - 48, height: 50)
         layoutTiles()
     }
     private func layoutTiles() {
@@ -210,7 +152,7 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
         let columns = self.columns
         canvas.columns = columns
         let side = floor((width - gap * CGFloat(columns - 1)) / CGFloat(columns))
-        let height: CGFloat = imagesOnly ? side : 88
+        let height: CGFloat = imagesOnly ? side : list.rowHeight(.row)
         let rows = Int(ceil(Double(canvas.tiles.count) / Double(columns)))
         canvas.frame.size = NSSize(width: width, height: max(scroll.contentSize.height, CGFloat(rows) * (height + gap)))
         let animate = pendingPromotion != nil && window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -228,18 +170,11 @@ final class ClipboardBrowserView: NSView, NSSearchFieldDelegate {
                 layoutTargets[key] = frame
             }
         }
+        canvas.attachVisible()
     }
     func screenFrame(for id: UUID) -> NSRect? {
         guard let window, let tile = canvas.tiles.first(where: { $0.entry.id == id }) else { return nil }
         return window.convertToScreen(tile.convert(tile.bounds, to: nil))
     }
     func reveal(_ id: UUID) { canvas.choose(id) }
-
-    /// Each opening starts here: the tab already shown, an empty search and its
-    /// newest entry chosen, so a search left from before never hides a new copy.
-    func startFresh() {
-        search.stringValue = ""
-        filterChanged()
-        if let newest = canvas.tiles.first { canvas.choose(newest.entry.id) }
-    }
 }

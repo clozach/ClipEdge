@@ -6,9 +6,17 @@ enum PublishReply: Equatable {
     case ready(PublishCandidate)
     case published(fingerprint: String)
 
+    /// How a message names each field, in words rather than its JSON key.
+    private static let fieldNames = [
+        "kind": "response type", "latestFingerprint": "latest release's fingerprint", "latestVersion": "latest version number",
+        "candidate": "candidate name", "fingerprint": "fingerprint", "archiveSHA256": "archive checksum",
+        "receiptSHA256": "receipt checksum", "version": "version number", "changes": "release notes",
+        "previousVersion": "previous version number"
+    ]
+
     static func decode(_ data: Data, runningFingerprint: String) throws -> PublishReply {
         let object: [String: Any]
-        guard data.count <= 524_288,
+        guard data.count <= PublishLimits.reply,
               let decoded = try? JSONSerialization.jsonObject(with: data),
               let dictionary = decoded as? [String: Any],
               dictionary["kind"] is String else {
@@ -16,8 +24,12 @@ enum PublishReply: Equatable {
         }
         object = dictionary
         func string(_ key: String, limit: Int = 12_000) throws -> String {
-            guard let value = object[key] as? String, !value.isEmpty, value.count <= limit else {
-                throw PublishFailure.message("The release helper's response is missing a valid \(key).")
+            let name = fieldNames[key] ?? key
+            guard let value = object[key] as? String, !value.isEmpty else {
+                throw PublishFailure.message("The release helper's response has no \(name).")
+            }
+            guard value.count <= limit else {
+                throw PublishFailure.message("The release helper sent \(name) longer than ClipEdge accepts (\(PublishLimits.counted(value.count)) characters; at most \(PublishLimits.counted(limit))).")
             }
             return value
         }
@@ -49,7 +61,7 @@ enum PublishReply: Equatable {
                 throw PublishFailure.message("The prepared release does not match this running copy, or its receipt is invalid. Rebuild and try again.")
             }
             return .ready(PublishCandidate(id: id, version: try string("version", limit: 60),
-                fingerprint: fingerprint, archiveSHA256: digest, changes: try string("changes"),
+                fingerprint: fingerprint, archiveSHA256: digest, changes: try string("changes", limit: PublishLimits.releaseNotes),
                 previousVersion: try string("previousVersion", limit: 60), receiptSHA256: receipt))
         case "published":
             let fingerprint = try string("latestFingerprint", limit: 64)

@@ -19,7 +19,7 @@ final class ClipboardHotKey {
     init(keyCode: UInt32 = UInt32(kVK_Space), modifiers: NSEvent.ModifierFlags = [.control, .option],
          registrar: @escaping Registrar = ClipboardHotKey.nativeRegistration) {
         self.keyCode = keyCode
-        self.modifiers = modifiers.intersection([.command, .control, .option, .shift])
+        self.modifiers = modifiers.chord
         self.registrar = registrar
     }
 
@@ -90,7 +90,7 @@ private final class NativeRegistration {
         guard registered == noErr else { unregister(); return registered }
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.keyCode == UInt16(self.keyCode), !event.isARepeat,
-                  event.modifierFlags.intersection([.command, .control, .option, .shift]) == self.modifiers else { return event }
+                  event.chordModifiers == self.modifiers else { return event }
             self.onPress(); return nil
         }
         return registered

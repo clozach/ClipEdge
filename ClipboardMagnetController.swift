@@ -11,11 +11,17 @@ final class ClipboardMagnetController {
     private let systemEffects: SystemEffects?
     var quickLookHint = "⌃⌥Space"
     var onCancel: (() -> Void)?
+    var shouldHandleEscape: () -> Bool = { true }
     var onPaste: ((NSPoint) -> Void)?
     var onDrop: (() -> Void)?
 
     enum Presentation: Equatable { case hidden, small, carousel, drawer(ClipboardDrawerPreviewAnchor) }
-    private(set) var presentation: Presentation = .hidden
+    private(set) var presentation: Presentation = .hidden {
+        didSet { if presentation != oldValue { onPresentationChange?() } }
+    }
+    /// Quick Look opened, moved or closed, or the small magnet came or went (the drawer's selection
+    /// panel gives way to Quick Look's drawer magnet and returns when it closes).
+    var onPresentationChange: (() -> Void)?
     var isQuickLook: Bool {
         switch presentation { case .carousel, .drawer: return true; default: return false }
     }
@@ -25,6 +31,17 @@ final class ClipboardMagnetController {
     }
     var isVisible: Bool { panel.isVisible }
     var frame: NSRect { panel.frame }
+    /// Quick Look beside the open drawer, which turns over to the raw data; nil otherwise.
+    var drawerCarousel: ClipboardCarouselView? { drawerAnchor == nil ? nil : panel.contentView as? ClipboardCarouselView }
+    /// Its panel has the keyboard: a click in the raw data's text can give it.
+    var holdsKeyboard: Bool { panel.isVisible && panel.isKeyWindow }
+    /// The keys Quick Look's turn button and raw data name: the drawer's.
+    var keymap = ClipboardKeymap.drawer
+    /// Where a part copied from the raw data goes; the drawer routes it through its store.
+    var copyPart: (ClipboardRawCopy) -> Bool = { $0.write(to: .general) }
+    /// Where the keyboard goes when Quick Look's raw data's text lets go of it (the entry changes, the
+    /// preview turns back, Esc): the drawer's cards. Every Quick Look it shows uses it.
+    var returnKeyboard: () -> Void = {}
     var pasteDiagnostics: [String: Any] { pasteMonitor.diagnostics }
     var onNavigate: ((Int) -> Void)?
     private let previousKey = ClipboardHotKey(keyCode: 123, modifiers: [])
@@ -45,7 +62,13 @@ final class ClipboardMagnetController {
     private var appearanceObservation: NSKeyValueObservation?
     // This is a rendered-pixel limit, including padding and the holding glyph.
     // Convert it to AppKit points using the display under the attachment.
-    private var maximumAttachmentPixels: CGFloat { drawerAnchor != nil ? .greatestFiniteMagnitude : (isQuickLook ? 840 : 350) }
+    private var maximumAttachmentPixels: CGFloat { drawerAnchor != nil ? .greatestFiniteMagnitude : (isQuickLook ? 840 * previewScale() : 350) }
+    /// The preview size (Settings, 2026-10-16): Quick Look at the pointer is 420 × 340 points at
+    /// 100%, at most 840 pixels a side; beside the drawer its anchor carries the size.
+    var previewScale: () -> CGFloat = { 1 }
+    /// The Text size: Quick Look's caption and the held magnet's words grow with it.
+    var textScale: () -> CGFloat = { 1 }
+    static let pointerPreviewSize = NSSize(width: 420, height: 340)
     private let holdingGlyphHeight: CGFloat = 25
 
     private struct Motion {
@@ -92,6 +115,7 @@ final class ClipboardMagnetController {
         panel.becomesKeyOnlyIfNeeded = true
         panel.ignoresMouseEvents = true
         pasteMonitor.onCancel = { [weak self] in self?.onCancel?() }
+        pasteMonitor.shouldHandleCancel = { [weak self] in self?.shouldHandleEscape() ?? true }
         pasteMonitor.onPaste = { [weak self] point in self?.schedulePasteCompletion(at: point) }
         commandClick.onPaste = { [weak self] point in self?.schedulePasteCompletion(at: point) }
         commandClick.onDrop = { [weak self] in self?.onDrop?() }
@@ -148,7 +172,8 @@ final class ClipboardMagnetController {
 
     private func installSmallPreview(for entry: ClipboardEntry) {
         smallContent = (entry, entry.metadata, entry.thumbnail)
-        let preview = ClipboardAttachmentView.makeHeldPreview(for: entry, maximumAttachmentPixels: maximumAttachmentPixels, holdingGlyphHeight: holdingGlyphHeight, shortcutHint: quickLookHint)
+        let preview = ClipboardAttachmentView.makeHeldPreview(for: entry, maximumAttachmentPixels: maximumAttachmentPixels, holdingGlyphHeight: holdingGlyphHeight,
+                                                              shortcutHint: quickLookHint, textScale: textScale())
         previewSize = preview.size
         let visibleFrame = panel.frame
         panel.setFrame(NSRect(origin: visibleFrame.origin, size: preview.size), display: false)
@@ -177,11 +202,16 @@ final class ClipboardMagnetController {
         presentation = anchor.map(Presentation.drawer) ?? .carousel
         isHolding = true
         panel.ignoresMouseEvents = false
-        let view = retainedView ?? ClipboardCarouselView(entry: entry, urls: urls, position: position, count: count)
+        let view = retainedView ?? ClipboardCarouselView(entry: entry, urls: urls, position: position, count: count, keymap: keymap)
+        view.textScale = textScale()
         view.update(entry: entry, urls: urls, position: position, count: count)
+        // Beside the open drawer only: the medium cursor magnet takes no keys, so it stays on the preview.
+        view.allowsFlip = anchor != nil
+        view.raw.copier = { [weak self] part in self?.copyPart(part) ?? false }
+        view.raw.returnKeyboard = { [weak self] in self?.returnKeyboard() }
         view.onNavigate = { [weak self] in self?.onNavigate?($0) }
         view.onClose = { [weak self] in self?.onCancel?() }
-        previewSize = anchor?.frame.size ?? NSSize(width: 420, height: 340)
+        previewSize = anchor?.frame.size ?? NSSize(width: Self.pointerPreviewSize.width * previewScale(), height: Self.pointerPreviewSize.height * previewScale())
         if panel.contentView !== view { panel.contentView = view }
         panel.setFrame(anchor?.frame ?? previousFrame ?? pointerFrame(), display: true)
         view.frame = NSRect(origin: .zero, size: panel.frame.size)
@@ -205,12 +235,54 @@ final class ClipboardMagnetController {
         panel.contentView?.layoutSubtreeIfNeeded()
     }
 
+    /// The keyboard goes back to the drawer: Quick Look's panel lets go of the raw data's text it held.
+    func releaseKeyboard() { panel.makeFirstResponder(nil) }
+    /// Quick Look beside the drawer takes the keyboard, for its raw data's text to be read by key.
+    func takeKeyboard() { panel.makeKey() }
+
+    /// Quick Look hiding while its panel holds the keyboard (a copy ends it, its × or Esc drops it) gives the
+    /// keyboard back by the one rule (`ClipboardKeyboardReturn`). Ordered out holding it, AppKit would hand
+    /// it to another ClipEdge window (the drawer's tab, or the ⌥⌘\ window off screen) and bring ClipEdge to
+    /// the front.
     func hide() {
         stopObservation()
+        // Decided before anything closes, from where the keyboard is now.
+        let keyboard = ClipboardKeyboardReturn.after(.quickLook(besideOpenDrawer: drawerAnchor != nil), holdingKeyboard: holdsKeyboard)
         presentation = .hidden
         smallContent = nil
+        // Its raw data's text holding the keyboard gives it to the drawer's cards as it goes (`returnKeyboard`).
         (panel.contentView as? ClipboardCarouselView)?.closePreview()
-        panel.orderOut(nil)
+        switch keyboard {
+        case .takeBack:
+            // The panel itself still holding it (a click on it, not its text): the cards take it back the same way.
+            if holdsKeyboard { returnKeyboard() }
+            ClipboardWindow.orderOutReturningKeyboard(panel)
+        case .letGo where holdsKeyboard:
+            // No drawer open to take it back. Gated now, a ClipEdge window opening at this moment could not
+            // take the keyboard (the ⌥⌘\ window cancels Quick Look as it opens), so the panel stays a moment,
+            // unseen, and leaves through the keyboard gate, as the drawer's panel does.
+            panel.alphaValue = 0
+            panel.ignoresMouseEvents = true
+            guard !lettingGo else { return }
+            lettingGo = true
+            DispatchQueue.main.async { [weak self] in self?.letGoOfKeyboard() }
+        case .letGo, .leave:
+            panel.orderOut(nil)
+        }
+    }
+
+    /// Hidden holding the keyboard with no drawer open to take it back, the panel leaves a moment later (`letGoOfKeyboard`).
+    private var lettingGo = false
+
+    /// The panel goes out through the keyboard gate, so the app in front has the keyboard; shown again
+    /// meanwhile (the small magnet of the copy that ended Quick Look), it comes straight back without it. A
+    /// ClipEdge window that took the keyboard meanwhile keeps it.
+    private func letGoOfKeyboard() {
+        lettingGo = false
+        let showing = presentation != .hidden
+        guard !showing || panel.isKeyWindow else { return }
+        ClipboardWindow.orderOutReturningKeyboard(panel)
+        if showing { panel.orderFrontRegardless() }
     }
 
     private func stopObservation() {

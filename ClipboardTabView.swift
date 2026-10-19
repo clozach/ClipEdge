@@ -1,6 +1,8 @@
 import AppKit
 
-/// Tab motion and its two end grips; hover opening belongs to EdgeController.
+/// Tab motion and its two end grips; hover opening belongs to EdgeController. A drag that starts
+/// across the edge slides the drawer open or closed under the pointer (Al, 2026-10-16); one that
+/// starts along it moves the tab, to another edge too.
 final class ClipboardTabView: NSView {
     var onHover: (() -> Void)?
     var onClick: (() -> Void)?
@@ -8,6 +10,10 @@ final class ClipboardTabView: NSView {
     var onInteractionBegan: ((NSPoint) -> Void)?
     var onDrag: ((NSPoint) -> Void)?
     var onResize: ((CGFloat) -> Void)?
+    /// Points the pointer has travelled away from the wall since the press (negative: toward it).
+    var onSlide: ((CGFloat) -> Void)?
+    /// The slide let go, moving away from the wall at this many points a second (negative: toward it).
+    var onSlideEnded: ((CGFloat) -> Void)?
     var onInteractionEnded: (() -> Void)?
     var edge: ClipboardDockEdge = .right { didSet { refreshHandles() } }
     var isExpanded = false { didSet { refreshHandles() } }
@@ -18,14 +24,19 @@ final class ClipboardTabView: NSView {
     private var draggedEnd: Int?
     private var dragStart = NSPoint.zero
     private var hasDragged = false
+    /// What a drag of the middle does, decided by its first few points of travel.
+    private enum Gesture { case undecided, move, slide }
+    private var gesture = Gesture.undecided
+    /// The slide's recent travel, for its speed when it lets go.
+    private var samples: [(time: TimeInterval, travel: CGFloat)] = []
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
         setAccessibilityLabel("ClipEdge tab")
-        setAccessibilityHelp("Click to open. Hover opening follows Reveal Settings. Drag the middle to move; drag either end grip to resize both ends. Right-click for Reveal Settings.")
-        toolTip = "Open ← click\nMove ← drag the middle\nResize ← drag either end\nReveal Settings ← right-click"
+        setAccessibilityHelp("Click to open. Hover opening follows Settings. Drag away from the edge to open, toward it to close; drag along the edge to move; drag either end grip to resize both ends. Right-click for Settings.")
+        toolTip = "Open ← click, or drag away from the edge\nClose ← drag toward the edge\nMove ← drag along the edge\nResize ← drag either end\nSettings ← right-click"
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
@@ -69,6 +80,8 @@ final class ClipboardTabView: NSView {
         draggedEnd = end(at: convert(event.locationInWindow, from: nil))
         isInteracting = true
         hasDragged = false
+        gesture = .undecided
+        samples = []
         refreshHandles()
         onInteractionBegan?(dragStart)
         if draggedEnd == nil { NSCursor.closedHand.set() }
@@ -81,15 +94,47 @@ final class ClipboardTabView: NSView {
         if let draggedEnd {
             let travel = edge == .top ? point.x - dragStart.x : point.y - dragStart.y
             onResize?(travel * CGFloat(draggedEnd))
-        } else { onDrag?(point) }
+            return
+        }
+        let away = awayFromWall(point), along = edge == .top ? point.x - dragStart.x : point.y - dragStart.y
+        if gesture == .undecided { gesture = abs(away) > abs(along) ? .slide : .move }
+        switch gesture {
+        case .slide:
+            samples.append((event.timestamp, away))
+            samples.removeAll { event.timestamp - $0.time > 0.1 }
+            onSlide?(away)
+        case .move, .undecided:
+            onDrag?(point)
+        }
+    }
+
+    /// The pointer's travel since the press, away from the wall the tab sits on.
+    private func awayFromWall(_ point: NSPoint) -> CGFloat {
+        switch edge {
+        case .left: return point.x - dragStart.x
+        case .right: return dragStart.x - point.x
+        case .top: return dragStart.y - point.y
+        }
+    }
+
+    /// Over the last tenth of a second, points a second away from the wall.
+    private var slideSpeed: CGFloat {
+        guard let first = samples.first, let last = samples.last, last.time > first.time else { return 0 }
+        return (last.travel - first.travel) / CGFloat(last.time - first.time)
     }
 
     override func mouseUp(with event: NSEvent) {
         let clicked = !hasDragged
+        let slid = gesture == .slide
+        // A pause before letting go is no flick: only travel in the last tenth of a second counts.
+        samples.removeAll { event.timestamp - $0.time > 0.1 }
+        let speed = slid ? slideSpeed : 0
+        gesture = .undecided
         isInteracting = false
         draggedEnd = nil
         isHovered = bounds.contains(convert(event.locationInWindow, from: nil))
         onInteractionEnded?()
+        if slid { onSlideEnded?(speed) }
         if clicked { onClick?() }
         refreshHandles()
         NSCursor.openHand.set()

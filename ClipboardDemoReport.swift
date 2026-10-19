@@ -70,8 +70,7 @@ enum ClipboardDemoReport {
     /// (sRGB luminance; -1 while it is not built or has no ground), so a check needs no pixels.
     static func surfaces(history: ClipboardHistoryView, sendTo: ClipboardSendToView, in app: NSApplication) -> [String: Any] {
         let content = app.windows.filter(\.isVisible).compactMap(\.contentView)
-        let views: [(String, NSView?)] = [("history", history), ("historyConfirmation", history.confirmation),
-            ("sendTo", sendTo), ("quickLook", content.first { $0 is ClipboardCarouselView }),
+        let views: [(String, NSView?)] = [("history", history), ("sendTo", sendTo), ("quickLook", content.first { $0 is ClipboardCarouselView }),
             ("cardInfo", content.first { type(of: $0) == ClipboardSurfaceView.self })]
         var report: [String: Any] = [:]
         for (name, view) in views {

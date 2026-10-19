@@ -27,6 +27,52 @@ import AppKit
     private static let rightCorner = [CGPoint(x: 198.5, y: 0.5), CGPoint(x: 198, y: 2)]
     private static let insideCurve = [CGPoint(x: 4, y: 4)]
 
+    /// Every visible subview of `container` but Publish keeps out of the band above Publish and the band
+    /// to its right, each reaching the container's edges, so the corner between them is clear too. Both
+    /// containers are flipped: y grows down from the top edge.
+    private static func cornerIsClear(_ control: ClipboardPublishControl, in container: NSView) -> Bool {
+        let publish = control.frame, bounds = container.bounds
+        let above = NSRect(x: publish.minX, y: bounds.minY, width: bounds.maxX - publish.minX, height: publish.minY - bounds.minY)
+        let right = NSRect(x: publish.maxX, y: bounds.minY, width: bounds.maxX - publish.maxX, height: publish.maxY - bounds.minY)
+        return container.subviews.allSatisfy { view in
+            view === control || view.isHidden || view.frame.isEmpty || (!view.frame.intersects(above) && !view.frame.intersects(right))
+        }
+    }
+
+    /// Al, 2026-10-12: nothing above Publish or to its right, it disturbs the corner's symmetry. In the
+    /// window Publish has the top-right corner alone (Delete all is gone) and the tabs end 8 points short
+    /// of it; in the drawer's header it takes the right edge, the gear 6 points to its left, and the gear
+    /// keeps the edge while Publish is hidden. Every state that shows Publish, at the window's own size.
+    private static func cornerChecks(header: ClipboardDrawerHeader, window: ClipboardHistoryView, difference: PublishDifference) {
+        let candidate = PublishCandidate(id: "fixture", version: "2.3.1", fingerprint: String(repeating: "a", count: 64),
+            archiveSHA256: String(repeating: "b", count: 64), changes: "Fixture", previousVersion: "2.3")
+        let shown: [PublishState] = [.checking, .unknown("Offline"), .rebuildRequired("Source changed"), .different(difference), .preparing(difference),
+            .ready(candidate, difference), .reviewing(candidate, difference), .publishing(candidate, difference), .verifying(candidate, difference),
+            .failed("Fixture", difference), .publishFailed("Fixture", candidate, difference)]
+        check(window.frame.size == ClipboardHistoryController.preferredSize, "the window is checked at its own size")
+        check(!window.subviews.contains { ($0 as? NSButton)?.title.hasPrefix("Delete all") == true }, "the window has no Delete all button")
+        for state in shown {
+            let presentation = state.presentation
+            for control in [header.publishControl, window.publishControl] { control.apply(presentation) }
+            header.layoutSubtreeIfNeeded(); window.layoutSubtreeIfNeeded()
+            let name = presentation.title
+            for (place, control, container) in [("drawer", header.publishControl, header as NSView), ("window", window.publishControl, window as NSView)] {
+                check(!control.isHidden && control.frame.maxX == container.bounds.maxX - 16, "\(name): \(place)'s Publish sits 16 points from the right edge")
+                check(cornerIsClear(control, in: container), "\(name): nothing in the \(place) sits above Publish or to its right")
+            }
+            check(window.publishControl.frame.minY == 12 && window.publishControl.frame.height == 22, "\(name): the window's Publish is level with the tabs, at the top")
+            let tabs = window.tabs
+            check(tabs.frame.maxX + 8 <= window.publishControl.frame.minX && (0..<tabs.segmentCount).allSatisfy { tabs.width(forSegment: $0) >= tabs.titles[$0].size(font: tabs.font!).width + 2 * ClipboardTabBar.padding },
+                  "\(name): the window's tabs, each at its whole label, end at least 8 points short of Publish (\(tabs.frame.maxX) + 8 ≤ \(window.publishControl.frame.minX))")
+            let gear = header.settingsButton.frame
+            check(gear.maxX + 6 == header.publishControl.frame.minX, "\(name): the drawer's gear sits 6 points left of Publish")
+        }
+        header.publishControl.apply(PublishState.current(version: "2.3.1").presentation)
+        header.layoutSubtreeIfNeeded()
+        check(header.publishControl.isHidden && header.settingsButton.frame == NSRect(x: header.bounds.width - 42, y: 5, width: 28, height: 26),
+              "with Publish hidden, the gear keeps its place at the right edge")
+    }
+
     private static func progressFill(_ difference: PublishDifference) {
         let candidate = PublishCandidate(id: "fixture", version: "2.3.1", fingerprint: String(repeating: "a", count: 64),
             archiveSHA256: String(repeating: "b", count: 64), changes: "Fixture", previousVersion: "2.3")
@@ -83,7 +129,7 @@ import AppKit
         header.frame = NSRect(x: 0, y: 0, width: 380, height: 36)
         let window = ClipboardHistoryView(frame: NSRect(x: 0, y: 0, width: 800, height: 470))
         window.layoutSubtreeIfNeeded()
-        let cardFrame = window.card.frame
+        let cardFrame = window.flip.frame
         for control in [header.publishControl, window.publishControl] {
             var pressed = 0
             control.onPress = { pressed += 1 }
@@ -103,9 +149,9 @@ import AppKit
             check(!control.isHidden && control.title.contains("Check release"), "unavailable check stays visible and distinct")
         }
         window.layoutSubtreeIfNeeded()
-        check(cardFrame == window.card.frame, "release states never move clipboard card")
+        check(cardFrame == window.flip.frame, "release states never move clipboard card")
         check(!header.publishControl.frame.intersects(header.settingsButton.frame), "drawer action avoids Settings")
-        check(!window.publishControl.frame.intersects(window.deleteAll.frame), "window action avoids Delete all")
+        cornerChecks(header: header, window: window, difference: difference)
         progressFill(difference)
         print("Publish control tests passed (\(assertions) assertions)")
     }

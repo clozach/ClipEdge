@@ -211,6 +211,14 @@ import PDFKit
         guard let rtfd = note.rtfd(from: NSRange(location: 0, length: note.length), documentAttributes: [:]) else { fatalError("FAIL: RTFD fixture") }
         let flat = entry([(.rtfd, rtfd)])
         check(flat.kind == .text && flat.title == "ClipEdge fixture RTFD note", "RTFD alone reads as its text too")
+        // Rich text with a picture, as macOS leaves it on the pasteboard: RTFD alone, no plain text.
+        let pictured = NSMutableAttributedString(string: "ClipEdge fixture pictured note")
+        let attachment = NSTextAttachment(); attachment.image = NSImage(data: picture)
+        pictured.append(NSAttributedString(attachment: attachment))
+        guard let pictureRTFD = pictured.rtfd(from: NSRange(location: 0, length: pictured.length), documentAttributes: [:]) else { fatalError("FAIL: pictured RTFD fixture") }
+        let withPicture = entry([(.rtfd, pictureRTFD)])
+        check(withPicture.title == "ClipEdge fixture pictured note" && withPicture.plainTextForPaste == "ClipEdge fixture pictured note",
+              "a picture in rich text is neither in its title nor pasted as an attachment character (\(withPicture.title.unicodeScalars.map { String($0.value, radix: 16) }.suffix(2)))")
         check(entry(ClipboardWebCopies.rtf("https://example.com/rich")).kind == .link, "a rich-text address is a link, as plain text is")
 
         let chat = entry(ClipboardWebCopies.chatReply)
@@ -261,7 +269,7 @@ import PDFKit
         let design = entry(ClipboardWebCopies.figma()), page = entry(ClipboardWebCopies.html(ClipboardWebCopies.plainHTML))
         let copy = figma(design)!
         // Send to: the link opens in apps that open it; text only pastes.
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-web-copy-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-web-copy-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         check(ClipboardSendTo.openItems(for: design, materializer: materializer) == [copy.link], "Figma layers open as their link")
         check(ClipboardSendTo.openItems(for: page, materializer: materializer).isEmpty, "HTML is never handed to a browser")
@@ -321,14 +329,16 @@ import PDFKit
         card2.show(page); card2.layoutSubtreeIfNeeded()
         check(card2.bodyText == "ClipEdge fixture & HTML-only copy" && card2.imageFrame == nil && card2.linkText == nil && card2.noteText == nil,
               "an HTML-only copy fills the card with its text")
-        card2.show(entry([(NSPasteboard.PasteboardType("org.clipedge.fixture-opaque"), Data([1]))])); card2.layoutSubtreeIfNeeded()
+        card2.show(entry(ClipboardWebCopies.bookkeepingOnly)); card2.layoutSubtreeIfNeeded()
         check((card2.imageFrame?.height ?? 999) <= 56 && card2.bodyText == "Clipboard item", "an unknown item's symbol keeps its size too")
+        card2.show(entry([(NSPasteboard.PasteboardType("org.clipedge.fixture-opaque"), Data([1]))])); card2.layoutSubtreeIfNeeded()
+        check((card2.imageFrame?.height ?? 999) <= 56 && card2.bodyText.hasPrefix("Clipedge data\n"), "an app's own format is app data, named by its vendor when its label is no word")
 
         // An item's info: title and explanation, then the link with the facts, in full.
-        let tile = ClipboardTile(entry: design, style: .row)
+        let tile = ClipboardTile(entry: design, style: .row, keymap: .drawer)
         check(tile.tooltipSummary == copy.summary && tile.tooltipDetails.hasPrefix(copy.link.absoluteString + "\n"), "an item's info explains the layers and gives the link")
-        check(ClipboardTile(entry: page, style: .row).tooltipSummary == "ClipEdge fixture & HTML-only copy", "an HTML-only copy's info shows its text")
-        check(ClipboardTile(entry: caption, style: .row).tooltipText.hasPrefix("Fixture caption\n" + figma(caption)!.explanation), "a text layer's info shows its words and the explanation")
+        check(ClipboardTile(entry: page, style: .row, keymap: .drawer).tooltipSummary == "ClipEdge fixture & HTML-only copy", "an HTML-only copy's info shows its text")
+        check(ClipboardTile(entry: caption, style: .row, keymap: .drawer).tooltipText.hasPrefix("Fixture caption\n" + figma(caption)!.explanation), "a text layer's info shows its words and the explanation")
 
         // The held magnet: the symbol, title and explanation, whole, within the small magnet.
         for budget in [350.0, 700.0] as [CGFloat] {
@@ -358,7 +368,7 @@ import PDFKit
 
     private static func storeChecks() {
         let board = NSPasteboard.withUniqueName()
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-web-store-\(UUID().uuidString)", isDirectory: true)
+        let folder = ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-web-store-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder); board.releaseGlobally() }
         let history = folder.appendingPathComponent("History.plist")
@@ -414,10 +424,14 @@ import PDFKit
         check(Array(demo.entries.suffix(seeded.count).map(\.title)) == seeded, "the web copies sit above the seed, its order unchanged")
         let added = demo.entries.prefix(ClipboardWebCopies.demo.count)
         let kinds = added.map { entry -> String in
-            switch entry.kind { case .figma: return "figma"; case .html: return "html"; case .text: return "text"; case .other: return "other"; default: return "?" }
+            switch entry.kind {
+            case .figma: return "figma"; case .html: return "html"; case .text: return "text"; case .other: return "other"
+            case .appData: return "app data"; case .image: return "image"; default: return "?"
+            }
         }
         check(kinds.filter { $0 == "figma" }.count == 7 && kinds.filter { $0 == "html" }.count == 2 && kinds.filter { $0 == "text" }.count == 2
-              && kinds.filter { $0 == "other" }.count == 2, "the demo shows seven Figma copies (one a text layer), two HTML-only, two text and two unknown (\(kinds))")
+              && kinds.filter { $0 == "other" }.count == 3 && kinds.filter { $0 == "app data" }.count == 1 && kinds.filter { $0 == "image" }.count == 2,
+              "the demo shows seven Figma copies (one a text layer), two HTML-only, two text, three unknown, one app data and two pictures with app data (\(kinds))")
         check(added.first?.metadata.site == "claude.ai" && zip(added, added.dropFirst()).allSatisfy { $0.capturedAt > $1.capturedAt },
               "the newest demo copy is the chat reply, and the copies keep fixed, increasing times")
     }

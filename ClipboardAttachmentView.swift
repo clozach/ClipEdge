@@ -1,30 +1,41 @@
 import AppKit
 
 enum ClipboardAttachmentView {
-    static func makeHeldPreview(for entry: ClipboardEntry, maximumAttachmentPixels: CGFloat, holdingGlyphHeight: CGFloat, shortcutHint: String = "⌃⌥Space") -> (view: NSView, size: NSSize) {
+    /// `textScale`, the Text size, grows its words (the date, facts and hint) and their rows; the
+    /// picture keeps its size.
+    static func makeHeldPreview(for entry: ClipboardEntry, maximumAttachmentPixels: CGFloat, holdingGlyphHeight: CGFloat, shortcutHint: String = "⌃⌥Space",
+                                textScale: CGFloat = 1) -> (view: NSView, size: NSSize) {
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         let limit = maximumAttachmentPixels / max(1, screen?.backingScaleFactor ?? 1)
-        let stampHeight: CGFloat = 17
-        let hintHeight: CGFloat = 16
+        let small = NSFont.systemFont(ofSize: 10 * textScale)
+        let stampHeight = ceil(17 * textScale)
+        let hintHeight = max(ceil(16 * textScale), ClipboardKeyCap.size(shortcutHint, beside: small).height)
         // Quiet facts, then the first path on up to two lines, along the preview's
-        // bottom edge. A long path keeps its start and its file name; the drawer
-        // and the history window show it whole.
-        let wrapping = NSMutableParagraphStyle()
-        wrapping.lineBreakMode = .byCharWrapping
-        wrapping.alignment = .center
-        let factsAttributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10), .paragraphStyle: wrapping]
-        func factsText(_ width: CGFloat) -> String {
-            let path = entry.metadata.displayPaths.first.map { middleElided($0, lines: 2, width: width - 12, attributes: factsAttributes) }
-            return [entry.metadata.line, path ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
+        // bottom edge. The facts wrap between words; a path wraps by character so
+        // a long one keeps its start and its file name. The drawer and the history
+        // window show it whole.
+        func paragraph(_ mode: NSLineBreakMode) -> [NSAttributedString.Key: Any] {
+            let style = NSMutableParagraphStyle()
+            style.lineBreakMode = mode
+            style.alignment = .center
+            return [.font: small, .paragraphStyle: style]
         }
-        func factsHeight(_ text: String, _ width: CGFloat) -> CGFloat {
-            guard !text.isEmpty else { return 0 }
-            return ceil((text as NSString).boundingRect(with: NSSize(width: width - 12, height: .greatestFiniteMagnitude),
-                                                        options: .usesLineFragmentOrigin, attributes: factsAttributes).height) + 4
+        let factsAttributes = paragraph(.byWordWrapping), pathAttributes = paragraph(.byCharWrapping)
+        func factsText(_ width: CGFloat) -> NSAttributedString {
+            let text = NSMutableAttributedString(string: entry.metadata.line, attributes: factsAttributes)
+            if let path = entry.metadata.displayPaths.first.map({ middleElided($0, lines: 2, width: width - 12, attributes: pathAttributes) }) {
+                if text.length > 0 { text.append(NSAttributedString(string: "\n", attributes: factsAttributes)) }
+                text.append(NSAttributedString(string: path, attributes: pathAttributes))
+            }
+            return text
+        }
+        func factsHeight(_ text: NSAttributedString, _ width: CGFloat) -> CGFloat {
+            guard text.length > 0 else { return 0 }
+            return ceil(text.boundingRect(with: NSSize(width: width - 12, height: .greatestFiniteMagnitude), options: .usesLineFragmentOrigin).height) + 4
         }
         // The narrowest magnet needs the most lines; a wider preview needs fewer.
-        let preview = makePreview(for: entry, maximumSize: NSSize(width: limit, height: limit - holdingGlyphHeight - stampHeight - hintHeight - factsHeight(factsText(145), 145)))
-        let width = max(145, preview.size.width)
+        let preview = makePreview(for: entry, maximumSize: NSSize(width: limit, height: limit - holdingGlyphHeight - stampHeight - hintHeight - factsHeight(factsText(145 * textScale), 145 * textScale)))
+        let width = max(145 * textScale, preview.size.width)
         let facts = factsText(width)
         let metaHeight = factsHeight(facts, width)
         let size = NSSize(width: width, height: preview.size.height + holdingGlyphHeight + stampHeight + hintHeight + metaHeight)
@@ -32,27 +43,26 @@ enum ClipboardAttachmentView {
         preview.view.frame.origin = NSPoint(x: (size.width - preview.size.width) / 2, y: stampHeight + hintHeight + metaHeight)
         container.addSubview(preview.view)
         if metaHeight > 0 {
-            let meta = NSTextField(wrappingLabelWithString: facts)
-            meta.attributedStringValue = NSAttributedString(string: facts, attributes: factsAttributes.merging([.foregroundColor: NSColor.secondaryLabelColor]) { $1 })
+            let meta = NSTextField(wrappingLabelWithString: facts.string)
+            let quiet = NSMutableAttributedString(attributedString: facts)
+            quiet.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: quiet.length))
+            meta.attributedStringValue = quiet
             meta.frame = NSRect(x: 0, y: stampHeight + hintHeight, width: size.width, height: metaHeight)
-            meta.drawsBackground = true
-            meta.backgroundColor = .windowBackgroundColor
+            meta.drawsBackground = false
             container.addSubview(meta)
         }
         let stamp = NSTextField(labelWithString: entry.dateTimeStamp)
-        stamp.font = .systemFont(ofSize: 10, weight: .medium)
+        stamp.font = .systemFont(ofSize: 10 * textScale, weight: .medium)
         stamp.alignment = .center
         stamp.frame = NSRect(x: 0, y: hintHeight, width: size.width, height: stampHeight)
-        stamp.drawsBackground = true
-        stamp.backgroundColor = .windowBackgroundColor
+        stamp.drawsBackground = false
         container.addSubview(stamp)
-        let hint = NSTextField(labelWithString: "\(shortcutHint) · preview")
-        hint.font = .systemFont(ofSize: 10)
-        hint.textColor = .secondaryLabelColor
-        hint.alignment = .center
+        // Its key in a cap (2026-10-16).
+        let hint = NSTextField(labelWithString: "")
+        hint.attributedStringValue = (ClipboardHint.key(ClipboardKeyLabel(shown: shortcutHint, spoken: shortcutHint)) + " preview")
+            .attributed(font: small, color: .secondaryLabelColor, alignment: .center)
         hint.frame = NSRect(x: 0, y: 0, width: size.width, height: hintHeight)
-        hint.drawsBackground = true
-        hint.backgroundColor = .windowBackgroundColor
+        hint.drawsBackground = false
         container.addSubview(hint)
         // The destination app owns its actual cursor. Keep the holding cue
         // visible with our attachment even when that app chooses an I-beam.
@@ -81,6 +91,10 @@ enum ClipboardAttachmentView {
         case .figma(let copy):
             let symbol = NSImage(systemSymbolName: entry.kind.iconName, accessibilityDescription: nil)
             return makeCardPreview(image: symbol, title: copy.title, notes: [copy.explanation, copy.shortNote], maximumSize: maximumSize)
+        case .appData(let data):
+            // The formats are for the card and the item's info; a magnet has no room for a whole list.
+            let symbol = NSImage(systemSymbolName: entry.kind.iconName, accessibilityDescription: nil)
+            return makeCardPreview(image: symbol, title: data.title, notes: [ClipboardAppData.explanation, ClipboardAppData.shortNote], maximumSize: maximumSize)
         case .text, .link, .html:
             return makeTextPreview(entry.readableText ?? entry.title, maximumSize: maximumSize)
         case .other:

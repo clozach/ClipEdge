@@ -25,8 +25,10 @@ enum ClipboardSummary {
             return (url.lastPathComponent, detail, .file, NSWorkspace.shared.icon(for: type))
         }
 
+        // Any format of picture, however the app names it; a Keynote or Sketch copy
+        // with one is shown as that picture, and its app data rides along as facts.
         if let image = values.lazy.compactMap({ value -> NSImage? in
-            guard ClipboardFlavors.images.contains(value.type) else { return nil }
+            guard ClipboardFlavors.isPicture(value.type) else { return nil }
             return NSImage(data: value.data)
         }).first {
             let size = image.size
@@ -64,6 +66,11 @@ enum ClipboardSummary {
             let detail = html.address.map { $0.host ?? ($0.scheme ?? "").uppercased() } ?? (html.isComplete ? count : "at least \(count)")
             // The scanner already collapsed spaces; a short head is enough for 90 characters.
             return (title(String(html.text.prefix(2_000))), detail, .html(html), nil)
+        }
+
+        // An app's own format, with nothing else to read: named by its type, never decoded.
+        if let appData = ClipboardAppData(types: values.map(\.type.rawValue)) {
+            return (appData.title, appData.formatsFact, .appData(appData), nil)
         }
 
         // Name what the item holds: standard types first, a browser's private bookkeeping not at all.

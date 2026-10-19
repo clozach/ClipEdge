@@ -2,7 +2,8 @@ import AppKit
 import Vision
 import CoreServices
 
-/// Search data lives only in memory, and is derived again from retained payloads.
+/// Search data is derived from retained payloads. A picture's text is also kept beside its item
+/// in the history's store (`ClipboardHistoryFile.saveText`), so it is read once, not every launch.
 final class ClipboardSearchIndexer {
     struct Environment {
         var fileText: (URL) -> String? = { url in

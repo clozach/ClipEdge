@@ -2,8 +2,8 @@ import AppKit
 
 /// The one question the updater asks, on first launch. It floats without taking the keyboard,
 /// so nothing typed in another app can answer it. Once clicked, Return and Escape choose;
-/// Space does nothing.
-final class UpdateConsentPanel: NSPanel {
+/// Space does nothing. A ClipEdge keyboard panel: it asks the keyboard gate before taking the keyboard.
+final class UpdateConsentPanel: ClipboardKeyboardPanel {
     static let question = "Keep ClipEdge up to date automatically?"
     static let explanation = "Once a day ClipEdge looks on GitHub for a newer version and installs it while you are not using it. Nothing about you or your clipboard is sent. You can change this at any time: ClipEdge menu bar icon → Updates."
     private let onChoice: (UpdatePreference) -> Void
@@ -30,9 +30,6 @@ final class UpdateConsentPanel: NSPanel {
         orderFrontRegardless()
     }
 
-    override var canBecomeKey: Bool { ClipboardWindow.mayBecomeKey(self) }
-    override var canBecomeMain: Bool { false }
-
     override func keyDown(with event: NSEvent) {
         // Space must never answer; Return and Escape reach the buttons through super.
         if event.keyCode == 49 { return }
@@ -47,6 +44,15 @@ final class UpdateConsentPanel: NSPanel {
         onChoice(preference)
     }
 
+    /// Every way it goes: its buttons, and the Updates menu's Update Automatically and Check for Updates Now,
+    /// which close it while it may still hold the keyboard (opening a menu bar menu leaves it key). Clicked,
+    /// it holds the keyboard, so it leaves through the keyboard gate: the keyboard returns to the app in front
+    /// rather than to the drawer (even collapsed), which would take the typing.
+    override func close() {
+        ClipboardWindow.orderOutReturningKeyboard(self)
+        super.close()
+    }
+
     private static func content(target: UpdateConsentPanel) -> NSView {
         let icon = NSImageView(image: NSApplication.shared.applicationIconImage)
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -56,16 +62,18 @@ final class UpdateConsentPanel: NSPanel {
         let body = NSTextField(wrappingLabelWithString: explanation)
         body.font = .systemFont(ofSize: 13)
 
-        let yes = NSButton(title: "Update Automatically ⏎", target: target, action: #selector(accept))
+        let yes = NSButton(title: "", target: target, action: #selector(accept))
         yes.keyEquivalent = "\r"
-        let no = NSButton(title: "No Thanks esc", target: target, action: #selector(decline))
+        let no = NSButton(title: "No Thanks", target: target, action: #selector(decline))
         no.keyEquivalent = "\u{1b}"
         for button in [yes, no] {
             button.bezelStyle = .rounded
             button.refusesFirstResponder = true
         }
         yes.toolTip = "Check once a day and install new versions (Return)"
-        no.toolTip = "Leave updates off; Updates in the ClipEdge menu turns them on later (Escape)"
+        no.toolTip = "Leave updates off; Updates in the ClipEdge menu turns them on later"
+        // Its key in a cap (2026-10-16); No Thanks shows none, Esc going unsaid.
+        ClipboardKeyedTitle(name: "Update Automatically", key: ClipboardKeyLabel(shown: "⏎", spoken: "Return")).apply(to: yes)
 
         let buttons = NSStackView(views: [NSView(), no, yes])
         buttons.orientation = .horizontal

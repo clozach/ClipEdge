@@ -79,7 +79,9 @@ import AppKit
         let file = entry([(.fileURL, Data(pictureURL.absoluteString.utf8))], kind: .file)
         check(file.metadata == ClipboardMetadata(paths: [pictureURL.path]) && file.plainTextForPaste == pictureURL.path, "a Finder item starts with its path before the disk is read")
         let opaque = entry([(NSPasteboard.PasteboardType("com.example.opaque"), Data([9]))], kind: .other, detail: "com.example.opaque")
-        check(opaque.metadata.isEmpty && opaque.edgeText == "com.example.opaque", "an unknown flavor keeps its summary detail")
+        check(opaque.metadata.facts == ["Opaque data", "1 format"] && opaque.edgeText == "Opaque data · 1 format", "an app's own flavor names the app and counts the formats, whatever the kind (\(opaque.metadata.facts))")
+        let fixtureOnly = ClipboardMetadata(facts: ["1 format"])
+        check(fixtureOnly.pasteText == "1 format", "app data's own facts paste as a line")
 
         // Copies from web pages, recognized as captured.
         func captured(_ values: ClipboardWebCopies.Values) -> ClipboardEntry {

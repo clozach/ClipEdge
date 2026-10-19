@@ -2,6 +2,11 @@ import AppKit
 
 if CommandLine.arguments.contains("--demo") { ClipboardDemo.run(); exit(EXIT_SUCCESS) }
 
+// Curating the sample history from Terminal; never starts the app or touches its windows.
+if let flag = CommandLine.arguments.firstIndex(of: "--sample-history") {
+    exit(ClipboardSampleHistoryCommand.run(Array(CommandLine.arguments[(flag + 1)...])))
+}
+
 // A bounded diagnostic uses the installed binary's real macOS permissions.
 // It observes one paste gesture without creating a store or reading a clipboard.
 if let flag = CommandLine.arguments.firstIndex(of: "--verify-paste-listener"),

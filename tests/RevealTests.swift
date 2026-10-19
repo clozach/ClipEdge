@@ -37,7 +37,7 @@ import AppKit
     }
 
     private static func testPersistence() {
-        let suite = "ClipEdge-reveal-tests-" + UUID().uuidString
+        let suite = ClipboardMaterializer.privateSuiteName("ClipEdge-reveal-tests-")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let settings = ClipboardRevealSettings(defaults: defaults)
@@ -88,25 +88,31 @@ import AppKit
         func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0] + descendants($0) } }
         let controls = descendants(content)
         let popup = controls.compactMap { $0 as? NSPopUpButton }.first!
-        let slider = controls.compactMap { $0 as? NSSlider }.first { $0.accessibilityLabel() == "Hover delay in seconds" }!
-        let dismissal = controls.compactMap { $0 as? NSSlider }.first { $0.accessibilityLabel() == "Maximum close delay in seconds" }!
+        let delay = controls.compactMap { $0 as? ClipboardTuner }.first { $0.spec.label == "Hover delay" }!
+        let dismissal = controls.compactMap { $0 as? ClipboardTuner }.first { $0.spec.label == "Maximum close delay" }!
         let recorder = controls.compactMap { $0 as? ClipboardShortcutRecorder }.first!
         check(popup.numberOfItems == 3 && popup.accessibilityLabel() == "Reveal mode", "all modes are exposed accessibly")
-        check(!slider.isEnabled, "delay stays visible but disabled in instant mode")
+        check(!delay.isEnabled && !delay.isHiddenOrHasHiddenAncestor, "delay stays visible but dimmed in instant mode")
         popup.selectItem(at: 1)
         _ = popup.sendAction(popup.action, to: popup.target)
-        check(settings.mode == .delayed && slider.isEnabled, "native mode control writes through immediately")
-        slider.doubleValue = 1.2
-        _ = slider.sendAction(slider.action, to: slider.target)
-        check(settings.delaySeconds == 1.2, "native delay slider changes the preference")
-        check(slider.accessibilityValueDescription() == "1.20 seconds", "delay value is announced with units")
+        check(settings.mode == .delayed && delay.isEnabled, "native mode control writes through immediately")
+        delay.submit(1.2)
+        check(settings.delaySeconds == 1.2, "the hover delay field changes the preference")
+        check(delay.entry.accessibilityValue() == "1.2s" && delay.entry.accessibilityLabel() == "Hover delay in seconds", "delay value is announced with its unit")
         popup.selectItem(at: 2)
         _ = popup.sendAction(popup.action, to: popup.target)
-        check(settings.mode == .click && !slider.isEnabled, "click mode disables unused delay")
-        check(popup.nextKeyView === slider && slider.nextKeyView === dismissal && dismissal.nextKeyView === recorder, "settings controls form a keyboard loop")
-        dismissal.doubleValue = 2.4
-        _ = dismissal.sendAction(dismissal.action, to: dismissal.target)
-        check(settings.dismissalDelaySeconds == 2.4 && dismissal.accessibilityValueDescription() == "2.40 seconds", "native close delay writes through with units")
+        check(settings.mode == .click && !delay.isEnabled, "click mode dims the unused delay")
+        check(popup.nextKeyView === delay.keyView && delay.keyView.nextKeyView === dismissal.keyView && dismissal.keyView.nextKeyView?.accessibilityLabel() == "Opening duration in milliseconds",
+              "settings controls form a keyboard loop that reaches the drawer-motion fields after the close delay")
+        check(controls.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "Drawer motion" }, "Settings has a Drawer motion section")
+        check(controls.compactMap { $0 as? NSTextField }.filter(\.isEditable).map { $0.accessibilityLabel() } ==
+              ["Hover delay in seconds", "Maximum close delay in seconds", "Opening duration in milliseconds", "Closing duration in milliseconds",
+               "Text size in percent", "Thumbnail size in percent", "Preview size in percent"],
+              "seven numbers, the two delays, opening before closing, then the three sizes, each accessibly named")
+        let motionReset = controls.compactMap { $0 as? ClipboardKeyedButton }.first { $0.keyedTitle.plain == "Reset ⌥⌘R" }
+        check(motionReset?.keyEquivalent == "r" && motionReset?.keyEquivalentModifierMask == [.option, .command], "Drawer motion has a Reset button carrying its chord")
+        dismissal.submit(2.4)
+        check(settings.dismissalDelaySeconds == 2.4 && dismissal.entry.accessibilityValue() == "2.4s", "the close delay field writes through, announced with its unit")
         var requested: ClipboardShortcut?
         controller.onShortcutChange = { requested = $0; return -9878 }
         let candidate = ClipboardShortcut(keyCode: 40, modifiers: [.control, .option])!
@@ -119,7 +125,7 @@ import AppKit
         content.layoutSubtreeIfNeeded()
         let magnets = controls.compactMap { $0 as? NSButton }.first { $0.title == "Show cursor magnets" }!
         let magnetsNote = controls.compactMap { $0 as? NSTextField }.first { $0.stringValue.hasPrefix("A magnet shows") }!
-        for control in [popup, slider, dismissal, recorder, magnets, magnetsNote] {
+        for control in [popup, delay, dismissal, recorder, magnets, magnetsNote] {
             let frame = control.convert(control.bounds, to: content)
             check(!control.hasAmbiguousLayout && frame.width > 0 && frame.height > 0 && content.bounds.contains(frame), "settings control has nonempty, unambiguous in-window bounds")
         }
@@ -127,8 +133,9 @@ import AppKit
         check(controls.compactMap { $0 as? NSPopUpButton }.map { $0.accessibilityLabel() } == ["Reveal mode"] &&
               !controls.compactMap { $0 as? NSTextField }.contains { $0.stringValue.localizedCaseInsensitiveContains("reopen") },
               "Settings no longer offers Reopen on the last search")
-        check(recorder.nextKeyView?.nextKeyView === magnets, "after the shortcut, the keyboard goes to the magnet switch")
-        let stack = content.subviews.compactMap { $0 as? NSStackView }.first!
+        let drawerRecorder = controls.compactMap { $0 as? ClipboardShortcutRecorder }.first { $0.actionName == "Show / Hide Clipboard" }!
+        check(recorder.nextKeyView?.nextKeyView === drawerRecorder && drawerRecorder.nextKeyView?.nextKeyView === magnets, "the shortcut controls lead to the magnet switch")
+        let stack = controls.compactMap { $0 as? NSStackView }.first!
         check(abs(content.bounds.height - (ceil(stack.fittingSize.height) + 44)) <= 1 &&
               controller.window!.frame.height <= (NSScreen.main ?? NSScreen.screens[0]).visibleFrame.height,
               "the window fits its controls without the row and is no taller than the display")
@@ -182,7 +189,7 @@ import AppKit
         check(!header.hasAppIcon, "header does not invent missing app artwork")
         check(header.subviews.compactMap { $0 as? NSTextField }.contains { $0.stringValue == "ClipEdge" }, "header identifies the drawer")
         check(header.settingsButton.keyEquivalent == "," && header.settingsButton.keyEquivalentModifierMask == .command, "header gear exposes Command-comma")
-        check(header.settingsButton.accessibilityLabel()?.contains("Reveal Settings") == true, "header gear names the existing settings accessibly")
+        check(header.settingsButton.accessibilityLabel() == "Settings, comma" && header.settingsButton.toolTip == "Settings ← ,", "header gear names Settings and its key, \",\"")
         check(header.settingsButton.showsBorderOnlyWhileMouseInside, "header settings button exposes a hover border")
         var opens = 0
         header.onSettings = { opens += 1 }
@@ -200,16 +207,22 @@ import AppKit
         let drawer = ClipboardDrawerController(store: store, defaults: nil)
         drawer.onRevealSettings = { opens += 1 }
         _ = drawer.header.settingsButton.sendAction(drawer.header.settingsButton.action, to: drawer.header.settingsButton.target)
-        check(opens == 2, "drawer routes header gear to existing Reveal Settings")
-        check(drawer.browser.clear.nextKeyView === drawer.header.settingsButton && drawer.header.settingsButton.nextKeyView === drawer.browser.search, "header gear joins the browser keyboard loop")
+        check(opens == 2, "drawer routes header gear to existing Settings")
+        let gear = drawer.header.settingsButton, publish = drawer.header.publishControl, cards = drawer.browser
+        let select = cards.selectButton
+        check(cards.currentTab != ClipboardBrowserTab.images && cards.tabs.nextKeyView === select && select.nextKeyView === gear && gear.nextKeyView === cards.search,
+              "header gear joins the browser keyboard loop after the tabs and Select, which took Clear…'s place")
+        cards.choose(ClipboardBrowserTab.images)
+        check(cards.tabs.nextKeyView === cards.zoom && cards.zoom.nextKeyView === select && select.nextKeyView === gear,
+              "under Images, the zoom comes between the tabs and Select, then the gear")
+        cards.choose(ClipboardBrowserTab.all)
+        publish.apply(PublishState.different(PublishDifference(latestVersion: "2.3", detail: "Fixture")).presentation)
+        drawer.header.layoutSubtreeIfNeeded()
+        check(gear.nextKeyView === publish && publish.nextKeyView === cards.search && gear.frame.maxX < publish.frame.minX,
+              "with Publish showing, Tab goes left to right as they sit: gear, Publish, then the search")
+        publish.apply(PublishState.current(version: "2.3").presentation)
+        check(gear.nextKeyView === cards.search, "with Publish hidden, the gear leads to the search again")
         check(!drawer.isVisible, "header verification never orders the drawer")
-        let settingsWindow = VisibilityFixture(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
-        drawer.revealSettingsWindow = settingsWindow
-        check(drawer.allowsAutomaticHiding, "closed settings do not block outside-close")
-        settingsWindow.pretendVisible = true
-        check(!drawer.allowsAutomaticHiding, "open settings keep drawer from retracting")
-        settingsWindow.pretendVisible = false
-        check(drawer.allowsAutomaticHiding, "outside-close resumes after settings close")
     }
 
     private static func testDrawerExit() {
@@ -267,9 +280,4 @@ import AppKit
         check(policy.shouldHide(pointer: NSPoint(x: 715, y: 400), containsPointer: false, body: body, tab: tab,
                                  maximumDelay: 0.5, now: 0.49), "tab-edge grace also expires")
     }
-}
-
-private final class VisibilityFixture: NSPanel {
-    var pretendVisible = false
-    override var isVisible: Bool { pretendVisible }
 }

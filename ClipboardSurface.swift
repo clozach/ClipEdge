@@ -23,6 +23,16 @@ struct ClipboardSurface {
         Self(fill: Fill(color: .windowBackgroundColor, opacity: opacity), rim: .separatorColor, radius: radius, clips: clips)
     }
 
+    /// The drawer's ground over its glass (2026-10-16): the card's color, a little translucent,
+    /// with no rim. Clear glass takes its brightness from whatever is behind it, so without this
+    /// dark-mode text sat on light glass over a light window, and light-mode text on dark.
+    static func glassGround(radius: CGFloat) -> Self {
+        Self(fill: Fill(color: .windowBackgroundColor, opacity: glassGroundOpacity), radius: radius)
+    }
+    /// Enough of the window's color that text keeps its contrast over a white or a black window
+    /// behind; the glass still shows a little.
+    static let glassGroundOpacity: CGFloat = 0.86
+
     /// Call only inside the drawing appearance the colors should resolve in.
     func paint(_ layer: CALayer) {
         layer.backgroundColor = fill?.resolved.cgColor

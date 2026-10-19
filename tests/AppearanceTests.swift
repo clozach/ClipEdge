@@ -45,6 +45,16 @@ import AppKit
         return layer?.borderWidth == 1 && same(layer?.borderColor, rim)
     }
     private static func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+    /// Where card info's arrow and key columns start, in the info's own points.
+    /// The shortcut list hugs its columns, so a relayout (an appearance switch) never spreads them.
+    private static func keyColumns(_ built: (surfaces: [Painted], panels: [NSPanel], history: ClipboardHistoryView, transparent: NSView)) -> [CGFloat] {
+        guard let info = built.surfaces.first(where: { $0.name == "card info" })?.view,
+              let grid = descendants(info).lazy.compactMap({ $0 as? NSGridView }).first else { return [] }
+        info.layoutSubtreeIfNeeded()
+        return [1, 2].compactMap { column in
+            grid.cell(atColumnIndex: column, rowIndex: 0).contentView.map { $0.convert($0.bounds, to: info).minX }
+        }
+    }
 
     /// One painted surface: the view whose layer it paints and the look it should have.
     struct Painted {
@@ -63,23 +73,32 @@ import AppKit
     /// Each surface, built and hosted under whatever appearance the app has now.
     static func build() -> (surfaces: [Painted], panels: [NSPanel], history: ClipboardHistoryView, transparent: NSView) {
         let history = ClipboardHistoryView(frame: NSRect(x: 0, y: 0, width: 800, height: 470))
-        history.update(entries: [opaque], total: [opaque])
+        history.update(entries: [opaque])
         history.card.show(opaque)
         let carousel = ClipboardCarouselView(entry: opaque, urls: [], position: 0, count: 1)
         let sendToPanel = HiddenPanel(contentRect: NSRect(x: 0, y: 0, width: 260, height: 200),
                                       styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         let sendTo = ClipboardSendToPopover(panel: sendToPanel)
-        let info = ClipboardTileTooltip.content(for: "Clipboard item")
+        let selectionPanel = HiddenPanel(contentRect: NSRect(x: 0, y: 0, width: 280, height: 160),
+                                         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let selection = ClipboardSelectionPopover(keymap: .drawer, panel: selectionPanel)
+        selection.show(.init(count: 2)) { NSRect(origin: .zero, size: $0) }
+        let info = ClipboardTileTooltip.content(for: "Clipboard item", keymap: .drawer, asker: nil)
         let held = ClipboardAttachmentView.makeHeldPreview(for: opaque, maximumAttachmentPixels: 480, holdingGlyphHeight: 25).view
         let card = descendants(held).first { $0.layer?.cornerRadius == 11 }
         check(card != nil, "the held magnet has its small card")
-        let panels = [host(history), host(carousel), sendToPanel, host(info), host(held)]
+        // The drawer's body and tab paint the window's ground over their glass (2026-10-16).
+        let glass = ClipboardGlassView(frame: NSRect(x: 0, y: 0, width: 400, height: 600))
+        glass.updateLayout(bodyRect: NSRect(x: 0, y: 0, width: 380, height: 600), tabRect: NSRect(x: 380, y: 280, width: 20, height: 40), edge: .right)
+        let panels = [host(history), host(carousel), sendToPanel, selectionPanel, host(info), host(held), host(glass)]
         return ([Painted(name: "history window", view: history, fill: .windowBackgroundColor, opacity: nil, rim: .separatorColor),
-                 Painted(name: "delete-all question", view: history.confirmation, fill: .systemRed, opacity: 0.06, rim: .systemRed),
                  Painted(name: "Quick Look chrome", view: carousel, fill: .windowBackgroundColor, opacity: nil, rim: .separatorColor),
                  Painted(name: "drawer Send to", view: sendTo.view, fill: .windowBackgroundColor, opacity: nil, rim: .separatorColor),
+                 Painted(name: "selection's actions", view: selection.view, fill: .windowBackgroundColor, opacity: nil, rim: .separatorColor),
                  Painted(name: "card info", view: info, fill: .windowBackgroundColor, opacity: nil, rim: nil),
-                 Painted(name: "small magnet card", view: card ?? held, fill: .windowBackgroundColor, opacity: 0.96, rim: .separatorColor)],
+                 Painted(name: "small magnet card", view: card ?? held, fill: .windowBackgroundColor, opacity: 0.96, rim: .separatorColor),
+                 Painted(name: "drawer's ground", view: glass.bodyGround, fill: .windowBackgroundColor, opacity: ClipboardSurface.glassGroundOpacity, rim: nil),
+                 Painted(name: "drawer tab's ground", view: glass.tabGround, fill: .windowBackgroundColor, opacity: ClipboardSurface.glassGroundOpacity, rim: nil)],
                 panels, history, history.sendTo)
     }
 
@@ -96,6 +115,12 @@ import AppKit
             if surface.opacity == nil {
                 let ground = luminance(layer?.backgroundColor)
                 check(dark ? ground < 0.3 : ground > 0.9, "\(moment): the \(surface.name) ground reads \(dark ? "dark" : "light") (\(ground))")
+            } else if surface.name.hasPrefix("drawer") {
+                // Over the brightest window behind the glass in dark, and the darkest in light, the
+                // ground still reads in ClipEdge's own appearance.
+                let own = luminance(resolved(surface.fill, in: name)), opacity = surface.opacity!
+                let worst = own * opacity + (dark ? 1 : 0) * (1 - opacity)
+                check(dark ? worst < 0.35 : worst > 0.75, "\(moment): the \(surface.name) reads \(dark ? "dark over a white" : "light over a black") window behind (\(worst))")
             }
         }
         check(built.transparent.layer?.backgroundColor == nil, "\(moment): the window's own Send to list stays transparent")
@@ -140,18 +165,28 @@ import AppKit
         let atLogin = build()
         settle()
         expect(atLogin, .aqua, "built light")
+        let columnsBuiltLight = keyColumns(atLogin)
+        check(columnsBuiltLight.count == 2, "card info has its arrow and key columns")
         app.appearance = NSAppearance(named: .darkAqua)
         settle()
         expect(atLogin, .darkAqua, "switched to dark")
+        let columnsSwitchedDark = keyColumns(atLogin)
         app.appearance = NSAppearance(named: .aqua)
         settle()
         expect(atLogin, .aqua, "switched back to light")
+        let columnsBackLight = keyColumns(atLogin)
 
         // 2. Built while dark, as at a dark login or a magnet made after the switch.
         app.appearance = NSAppearance(named: .darkAqua)
         let inDark = build()
         settle()
         expect(inDark, .darkAqua, "built dark")
+        // Card info's shortcut list keeps its light layout through every switch: the keys stay beside their names.
+        for (moment, columns) in [("switched to dark", columnsSwitchedDark), ("switched back to light", columnsBackLight),
+                                  ("built dark", keyColumns(inDark))] {
+            check(columns.count == 2 && zip(columns, columnsBuiltLight).allSatisfy { abs($0 - $1) < 0.5 },
+                  "\(moment): card info's arrow and key columns stay where they are built light (\(columns) vs \(columnsBuiltLight))")
+        }
         // The fixture's --demo-report reads the same grounds, so a live check needs no pixels.
         let sendTo = inDark.surfaces.lazy.compactMap { $0.view as? ClipboardSendToView }.first!
         let report = ClipboardDemoReport.surfaces(history: inDark.history, sendTo: sendTo, in: app)
@@ -164,7 +199,7 @@ import AppKit
         // 3. The history card is legible in dark: its symbol and title stand out from the ground.
         check(isDark(atLogin.history), "the history window built in light is dark now")
         let window = snapshot(atLogin.history)
-        let card = atLogin.history.card.frame
+        let card = atLogin.history.flip.frame
         let cardPixels = luminances(window, in: card.insetBy(dx: 10, dy: 10), viewWidth: atLogin.history.bounds.width)
         let ground = luminance(atLogin.history.layer?.backgroundColor)
         check(cardPixels.contains { abs($0 - ground) > 0.3 }, "the dark history card shows its symbol and title, not a blank card")
@@ -174,7 +209,7 @@ import AppKit
                                               (.row, "drawer", NSSize(width: 300, height: 90), NSRect(x: 11, y: 14, width: 46, height: 46))] {
             for theme in [NSAppearance.Name.darkAqua, .aqua] {
                 app.appearance = NSAppearance(named: theme)
-                let tile = ClipboardTile(entry: opaque, style: style)
+                let tile = ClipboardTile(entry: opaque, style: style, keymap: .drawer)
                 tile.frame = NSRect(origin: .zero, size: size)
                 let icon = withExtendedLifetime(host(tile)) { () -> [CGFloat] in
                     settle()

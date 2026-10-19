@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import UniformTypeIdentifiers
 
 final class ClipboardStore {
@@ -11,9 +10,19 @@ final class ClipboardStore {
     var onPasteCommitted: (() -> Void)?
 
     private let pasteboard: NSPasteboard
-    private let persistenceURL: URL?
+    private var persistenceURL: URL?
     private let persistenceQueue = DispatchQueue(label: "local.codex.ClipEdge.persistence", qos: .utility)
-    private let maximumEntries = 50
+    /// What the history may hold: 1% of the free space on its disk (Al, 2026-10-16), read at most
+    /// once a minute; `measureStorage` reads it (tests give their own).
+    var measureStorage: () -> ClipboardStorageBudget? = { nil }
+    private var budget: ClipboardStorageBudget?
+    /// The most items kept, whatever the budget (`ClipboardStorageBudget.ceiling`; tests lower it).
+    var itemCeiling = ClipboardStorageBudget.ceiling
+    private var budgetMeasuredAt: Date?
+    /// Every format's bytes of every item kept.
+    var usedBytes: Int64 { entries.reduce(0) { $0 + $1.byteCount } }
+    /// The budget and the bytes kept, for the floppy warning; nil when the disk cannot be read.
+    var storageReport: ClipboardStorageReport? { currentBudget().map { ClipboardStorageReport(budget: $0, usedBytes: usedBytes) } }
     private let maximumPayloadBytes = 32 * 1_024 * 1_024
     private var timer: Timer?
     private var lastChangeCount: Int
@@ -74,6 +83,32 @@ final class ClipboardStore {
         self.fileInspector = fileInspector
         self.searchIndexer = searchIndexer
         lastChangeCount = pasteboard.changeCount
+        measureStorage = { [weak self] in
+            ClipboardStorageBudget.measure(at: self?.persistenceURL ?? FileManager.default.homeDirectoryForCurrentUser)
+        }
+    }
+
+    /// The budget, read again when a minute old (or when asked to).
+    private func currentBudget(remeasure: Bool = false) -> ClipboardStorageBudget? {
+        if remeasure || budgetMeasuredAt.map({ Date().timeIntervalSince($0) > 60 }) ?? true {
+            budget = measureStorage()
+            budgetMeasuredAt = Date()
+        }
+        return budget
+    }
+
+    /// Lets go of the oldest items until the history fits its budget and the ceiling; the newest
+    /// always stays. Returns what went.
+    @discardableResult
+    private func trimToBudget(remeasure: Bool = false) -> [ClipboardEntry] {
+        let limit = currentBudget(remeasure: remeasure)?.limit ?? .max
+        var used = usedBytes, evicted: [ClipboardEntry] = []
+        while entries.count > 1, entries.count > itemCeiling || used > limit {
+            let oldest = entries.removeLast()
+            used -= oldest.byteCount
+            evicted.append(oldest)
+        }
+        return evicted
     }
 
     func start() {
@@ -108,12 +143,35 @@ final class ClipboardStore {
         pendingPersistenceWorkItem?.cancel()
         pendingPersistenceWorkItem = nil
         guard let persistenceURL else { return true }
-        let archive = makePersistedHistory()
+        let records = entries.map(ClipboardHistoryFile.record)
         var didSave = false
         persistenceQueue.sync {
-            didSave = Self.write(archive, to: persistenceURL)
+            didSave = ClipboardHistoryFile.write(records, to: persistenceURL)
         }
         return didSave
+    }
+
+    /// The file this history saves to.
+    var historyURL: URL? { persistenceURL }
+
+    /// Saves this history, then shows and records into the one at `url`. Whatever is held goes
+    /// back first. The clipboard's present contents join neither history: switching is not a copy.
+    func switchHistory(to url: URL?) {
+        checkForChanges()
+        cancelStaging()
+        endPlainTextPaste()
+        _ = saveNow()
+        let leaving = entries
+        entries = []
+        heldItem = nil
+        cycle.reset()
+        currentClipboardEntryID = nil
+        onStagingChange?(.invalidated)
+        leaving.forEach { onRemove?($0) }
+        persistenceURL = url
+        loadPersistedHistory()
+        lastChangeCount = pasteboard.changeCount
+        notifyChange()
     }
 
     func clear() {
@@ -158,17 +216,38 @@ final class ClipboardStore {
         return true
     }
 
+    /// Text ClipEdge itself copies (a selection's Copy as text): one plain copy on the
+    /// clipboard, which the history then takes as it takes any copy, as its newest entry.
+    @discardableResult
+    func copyText(_ text: String) -> Bool {
+        guard !text.isEmpty else { checkForChanges(); endPlainTextPaste(); return false }
+        return copy(.text(text))
+    }
+
+    /// One part of an entry copied from its raw data (a flavor, or text selected in it), or a
+    /// selection's text: the history takes it as any copy, as its newest entry.
+    @discardableResult
+    func copy(_ part: ClipboardRawCopy) -> Bool {
+        checkForChanges()
+        endPlainTextPaste()
+        guard part.write(to: pasteboard) else { return false }
+        checkForChanges()
+        return true
+    }
+
     /// Lend the clipboard a plain-text copy of what it holds, for one paste.
     /// A tracked entry lends its text (or its facts and paths); an untracked
     /// clipboard lends its own string; an empty one takes the top entry first.
-    func beginPlainTextPaste() -> Int? {
+    /// Given `text` (a selection's Paste as text), it lends that instead, and
+    /// what the clipboard held returns afterwards all the same.
+    func beginPlainTextPaste(lending given: String? = nil) -> Int? {
         checkForChanges()
         endPlainTextPaste()
-        if currentClipboardEntryID == nil, pasteboard.pasteboardItems?.isEmpty != false, let top = entries.first {
+        if given == nil, currentClipboardEntryID == nil, pasteboard.pasteboardItems?.isEmpty != false, let top = entries.first {
             guard makeCurrent(top) else { return nil }
         }
         let tracked = entries.first { $0.id == currentClipboardEntryID }
-        let text = tracked?.plainTextForPaste ?? pasteboard.string(forType: .string) ?? ""
+        let text = given ?? tracked?.plainTextForPaste ?? pasteboard.string(forType: .string) ?? ""
         guard !text.isEmpty, let original = ClipboardRestorePoint.capture(
             pasteboard, historyID: currentClipboardEntryID, limit: maximumPayloadBytes) else { return nil }
         let item = NSPasteboardItem()
@@ -272,10 +351,23 @@ final class ClipboardStore {
     }
 
     @discardableResult
-    func remove(_ entry: ClipboardEntry) -> Bool {
+    func remove(_ entry: ClipboardEntry) -> Bool { remove([entry]) }
+
+    /// Deletes these entries for good, those still in the history, saving once: a selection's
+    /// Delete N… as one change. An entry already gone is skipped, never an error.
+    @discardableResult
+    func remove(_ doomed: [ClipboardEntry]) -> Bool {
         checkForChanges()
         resetCycle()
-        guard entries.contains(where: { $0.id == entry.id }) else { return true }
+        let present = doomed.filter { entry in entries.contains { $0.id == entry.id } }
+        guard !present.isEmpty else { return true }
+        present.forEach(drop)
+        historyDidChange()
+        return saveNow()
+    }
+
+    /// One entry out of the history, with everything that still pointed at it.
+    private func drop(_ entry: ClipboardEntry) {
         entries.removeAll { $0.id == entry.id }
         // Deleting a history item also retires any temporary undo copy of it.
         // Cancelling another pickup must not resurrect that deleted payload.
@@ -297,8 +389,6 @@ final class ClipboardStore {
             onStagingChange?(.invalidated)
         }
         onRemove?(entry)
-        historyDidChange()
-        return saveNow()
     }
 
     private func promote(_ entry: ClipboardEntry) {
@@ -350,7 +440,7 @@ final class ClipboardStore {
         }
 
         guard !payloads.isEmpty else { return }
-        let digest = Self.fingerprint(for: payloads)
+        let digest = ClipboardHistoryFile.fingerprint(for: payloads)
 
         if let existingIndex = entries.firstIndex(where: { $0.fingerprint == digest }) {
             let existing = entries.remove(at: existingIndex)
@@ -376,11 +466,7 @@ final class ClipboardStore {
         currentClipboardEntryID = entry.id
         deriveDetails(entry)
         if attach, attachesCopiesToCursor() { attachToCursor(entry) }
-        if entries.count > maximumEntries {
-            let evicted = Array(entries.suffix(entries.count - maximumEntries))
-            entries.removeLast(entries.count - maximumEntries)
-            evicted.forEach { onRemove?($0) }
-        }
+        trimToBudget().forEach { onRemove?($0) }
         historyDidChange()
     }
 
@@ -434,8 +520,15 @@ final class ClipboardStore {
         })
     }
 
+    /// A picture's text is read once and kept beside its item, so a launch does not read every
+    /// picture again; a file's text is read afresh, since the file can change.
     private func indexText(_ entry: ClipboardEntry, image: CGImage? = nil) {
         guard entry.isImage || !entry.fileURLs.isEmpty else { return }
+        let keepsText = entry.isImage && entry.fileURLs.isEmpty && image == nil
+        if keepsText, let url = persistenceURL, let saved = ClipboardHistoryFile.savedText(of: entry.fingerprint, in: url) {
+            entry.searchIndex = .ready(saved)
+            return
+        }
         entry.searchGeneration &+= 1
         let generation = entry.searchGeneration
         entry.searchIndex = .pending
@@ -443,6 +536,11 @@ final class ClipboardStore {
             guard let self, let entry, entry.searchGeneration == generation,
                   self.entries.contains(where: { $0.id == entry.id }) else { return }
             entry.searchIndex = result
+            if keepsText, case .ready(let text) = result, let url = self.persistenceURL {
+                let fingerprint = entry.fingerprint
+                // After the item's own save, which runs first on the same queue.
+                self.persistenceQueue.async { ClipboardHistoryFile.saveText(text, of: fingerprint, in: url) }
+            }
             self.notifyChange()
         }
     }
@@ -477,72 +575,42 @@ final class ClipboardStore {
 
     private func schedulePersistence() {
         guard let persistenceURL else { return }
-        let archive = makePersistedHistory()
+        let records = entries.map(ClipboardHistoryFile.record)
         pendingPersistenceWorkItem?.cancel()
 
         let workItem = DispatchWorkItem {
-            Self.write(archive, to: persistenceURL)
+            ClipboardHistoryFile.write(records, to: persistenceURL)
         }
         pendingPersistenceWorkItem = workItem
         persistenceQueue.async(execute: workItem)
     }
 
-    private func makePersistedHistory() -> PersistedHistory {
-        PersistedHistory(
-            version: 1,
-            entries: entries.map { entry in
-                PersistedEntry(
-                    fingerprint: entry.fingerprint,
-                    capturedAt: entry.capturedAt,
-                    payloads: entry.payloads.map { payload in
-                        PersistedPayload(values: payload.values.map { value in
-                            PersistedValue(type: value.type.rawValue, data: value.data)
-                        })
-                    }
-                )
-            }
-        )
-    }
-
     private func loadPersistedHistory() {
-        guard let persistenceURL, FileManager.default.fileExists(atPath: persistenceURL.path) else { return }
+        guard let persistenceURL else { return }
 
         do {
-            let data = try Data(contentsOf: persistenceURL, options: .mappedIfSafe)
-            let archive = try PropertyListDecoder().decode(PersistedHistory.self, from: data)
-            guard archive.version == 1 else { throw PersistenceError.unsupportedVersion }
-
+            guard let records = try ClipboardHistoryFile.read(persistenceURL) else { return }
             var loadedEntries: [ClipboardEntry] = []
             var seenFingerprints = Set<String>()
-            for persisted in archive.entries.prefix(maximumEntries) {
-                let payloads = persisted.payloads.map { payload in
-                    ClipboardPayload(values: payload.values.map { value in
-                        (NSPasteboard.PasteboardType(value.type), value.data)
-                    })
-                }
-                guard isValidForPersistence(payloads) else { continue }
-
-                let fingerprint = Self.fingerprint(for: payloads)
-                guard fingerprint == persisted.fingerprint,
+            for record in records.prefix(itemCeiling) {
+                guard isValidForPersistence(record.payloads) else { continue }
+                // An item from the store is in a folder named by its fingerprint; hashing every byte
+                // of a large history at launch would read all of it from disk.
+                let fingerprint = record.fromStore ? record.fingerprint : ClipboardHistoryFile.fingerprint(for: record.payloads)
+                guard fingerprint == record.fingerprint,
                       seenFingerprints.insert(fingerprint).inserted else { continue }
-
-                let preview = ClipboardSummary.make(from: payloads)
-                loadedEntries.append(ClipboardEntry(
-                    fingerprint: fingerprint,
-                    capturedAt: persisted.capturedAt,
-                    payloads: payloads,
-                    title: preview.title,
-                    detail: preview.detail,
-                    kind: preview.kind,
-                    thumbnail: preview.thumbnail
-                ))
+                loadedEntries.append(ClipboardHistoryFile.entry(record))
             }
 
             entries = loadedEntries
+            let trimmed = !trimToBudget(remeasure: true).isEmpty
             entries.forEach(deriveDetails)
             notifyChange()
+            // A history read from its old file moves into its store now (the old file stays as it
+            // was); one that lost items to the budget saves without them.
+            if records.contains(where: { !$0.fromStore }) || trimmed { schedulePersistence() }
         } catch {
-            quarantineUnreadableHistory(at: persistenceURL)
+            ClipboardHistoryFile.quarantine(persistenceURL)
         }
     }
 
@@ -571,76 +639,9 @@ final class ClipboardStore {
         cancelStaging()
     }
 
-    private func quarantineUnreadableHistory(at url: URL) {
-        let suffix = Int(Date().timeIntervalSince1970)
-        let quarantineURL = url.deletingLastPathComponent()
-            .appendingPathComponent("History-corrupt-\(suffix).plist")
-        try? FileManager.default.moveItem(at: url, to: quarantineURL)
-    }
-
     private static func defaultPersistenceURL() -> URL? {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("ClipEdge", isDirectory: true)
             .appendingPathComponent("History.plist", isDirectory: false)
     }
-
-    @discardableResult
-    private static func write(_ archive: PersistedHistory, to url: URL) -> Bool {
-        do {
-            let directory = url.deletingLastPathComponent()
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-            let encoder = PropertyListEncoder()
-            encoder.outputFormat = .binary
-            let data = try encoder.encode(archive)
-            try data.write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    private static func fingerprint(for payloads: [ClipboardPayload]) -> String {
-        var digestMaterial = Data()
-        for payload in payloads {
-            for value in payload.values {
-                digestMaterial.append(contentsOf: value.type.rawValue.utf8)
-                digestMaterial.append(0)
-                digestMaterial.append(value.data)
-                digestMaterial.append(0)
-            }
-        }
-        return SHA256.hash(data: digestMaterial).map { String(format: "%02x", $0) }.joined()
-    }
-
-
-}
-
-private enum PersistenceError: Error {
-    case unsupportedVersion
-}
-
-private struct PersistedHistory: Codable {
-    let version: Int
-    let entries: [PersistedEntry]
-}
-
-private struct PersistedEntry: Codable {
-    let fingerprint: String
-    let capturedAt: Date
-    let payloads: [PersistedPayload]
-}
-
-private struct PersistedPayload: Codable {
-    let values: [PersistedValue]
-}
-
-private struct PersistedValue: Codable {
-    let type: String
-    let data: Data
 }

@@ -111,7 +111,7 @@ import AppKit
 
         // The history window.
         let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-history-tests-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-history-tests-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         let previews = ClipboardPreviewService(materializer: materializer)
         let history = ClipboardHistoryController(store: store, paster: paster, previewService: previews, panel: panel)
@@ -126,14 +126,15 @@ import AppKit
         @discardableResult func press(_ code: UInt16, _ modifiers: NSEvent.ModifierFlags = [], _ characters: String = "") -> Bool {
             history.handleKey(key(code, modifiers, characters: characters))
         }
-        func type(_ query: String) { search.stringValue = query; history.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
+        func type(_ query: String) { search.stringValue = query; history.view.search.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
         var typingInSearch: Bool { (panel.firstResponder as? NSTextView)?.delegate === search }
         let order = { store.entries.map(\.id) }
         check(!history.isVisible && history.selectedEntry == nil, "window starts closed")
         history.hotKeyPressed()
         check(history.isVisible && prepared == 1 && panel.isVisible && typingInSearch, "first press opens the window with the keyboard in its search field")
         check(history.selectedEntry === store.entries[0] && canvas.tiles.count == store.entries.count, "the newest entry is preselected")
-        check(!canvas.acceptsFirstResponder && history.view.tabs.refusesFirstResponder && history.view.deleteAll.refusesFirstResponder, "clicking the list, tabs or buttons leaves the keyboard in the search field")
+        check(!canvas.acceptsFirstResponder && history.view.tabs.refusesFirstResponder && history.view.footer.subviews.compactMap { $0 as? NSButton }.allSatisfy(\.refusesFirstResponder),
+              "clicking the list, tabs or buttons leaves the keyboard in the search field")
         check(history.view.countText.hasPrefix("\(store.entries.count) of \(store.entries.count) items"), "the count says how many items show")
         check(canvas.tiles.allSatisfy { $0.style == .compact }, "rows are compact")
         check(history.view.card.entryID == store.entries[0].id && history.view.card.edgeText.contains("words"), "the card shows the selection with its facts along the edge")
@@ -146,8 +147,8 @@ import AppKit
         for _ in 0..<(store.entries.count - 1) { history.hotKeyPressed() }
         check(history.selectedEntry === store.entries[0], "repeated presses wrap from the oldest back to the newest")
         press(126); check(history.selectedEntry === store.entries[0], "Up stops at the newest entry")
-        check(history.view.footer.items.map(\.title) == ["Paste ⏎", "Plain text ⌃⌘⏎", "Copy ⌘C", "Send to ⇥", "Open in Preview ⌘O", "Delete ⌘⌫"], "every action button names its key")
-        check(history.view.footer.hint.hasSuffix("esc closes"), "with no search, Esc closes")
+        check(history.view.footer.items.map(\.title) == ["Paste ⏎", "Plain text ⌃⌘⏎", "Copy ⌘C", "Send to ⇥", "Open in Preview ⌘O", "Raw data ⌘I", "Delete ⌘⌫"], "every action button names its key")
+        check(history.view.footer.hintText == "\(ClipboardShortcut.history.displayString) older", "the footer's hint names the older-item shortcut and explains no Esc")
         check(!press(0, [], "a") && !press(51) && !press(51, .option) && !press(123, .shift) && !press(124, .command), "letters, ⌫, ⌥⌫ and modified arrows go to the search field")
         check(press(48, .shift) && typingInSearch && !history.isSending, "⇧Tab does not move the keyboard out of the search field")
 
@@ -157,7 +158,7 @@ import AppKit
         let trips = store.entries.filter { $0.title.hasPrefix("Trip") }
         check(canvas.tiles.map(\.entry.id) == trips.map(\.id) && trips.count == 2, "typing shows only the matching entries")
         check(history.selectedEntry === trips[0] && history.view.countText.hasPrefix("2 of \(store.entries.count) items"), "the newest match is selected and counted")
-        check(history.view.footer.hint.hasSuffix("esc clears search"), "with a search, Esc says it clears the search")
+        check(!history.view.footer.hintText.lowercased().contains("esc"), "with a search the hint still explains no Esc")
         press(125); check(history.selectedEntry === trips[1], "arrows move within the matches")
         history.hotKeyPressed(); check(history.selectedEntry === trips[0], "the shortcut wraps within the matches")
         type("no such words")
@@ -167,25 +168,25 @@ import AppKit
         check(history.isVisible && search.stringValue.isEmpty && canvas.tiles.count == store.entries.count, "Esc clears the search and keeps the window")
         check(history.selectedEntry === store.entries[0], "clearing the search selects the newest entry")
 
-        // ⌘1–⌘3 choose the tab; the selection stays when it is still shown.
+        // ⌘0–⌘2 choose the tab; the selection stays when it is still shown.
         let pictures = store.entries.filter(\.isImage)
         canvas.choose(pictures[1].id)
         check(press(19, .command, "2") && history.view.currentTab == .images, "⌘2 shows Images")
         check(canvas.tiles.map(\.entry.id) == pictures.map(\.id) && history.selectedEntry === pictures[1], "Images keeps the selected picture")
-        check(press(20, .command, "3") && history.view.currentTab == .text && canvas.tiles.allSatisfy { !$0.entry.isImage }, "⌘3 shows Text")
+        check(press(18, .command, "1") && history.view.currentTab == .text && canvas.tiles.allSatisfy { !$0.entry.isImage }, "⌘1 shows Text")
         check(history.selectedEntry === canvas.tiles.first?.entry, "a tab without the selection selects its newest entry")
         type("trip"); check(canvas.tiles.count == 2, "search works within a tab")
         type("")
-        history.view.tabs.selectedSegment = 1
+        history.view.tabs.selectedSegment = ClipboardBrowserTab.images.rawValue
         history.view.tabs.sendAction(history.view.tabs.action!, to: history.view.tabs.target)
         check(history.view.currentTab == .images && canvas.tiles.count == pictures.count, "clicking a tab does the same")
-        press(18, .command, "1"); check(history.view.currentTab == .all && canvas.tiles.count == store.entries.count, "⌘1 shows everything again")
+        press(29, .command, "0"); check(history.view.currentTab == .all && canvas.tiles.count == store.entries.count, "⌘0 shows everything again")
         history.close(); history.hotKeyPressed()
         check(history.view.currentTab == .all && search.stringValue.isEmpty && history.selectedEntry === store.entries[0], "each opening starts from All, no search, newest first")
 
         // A row that opens or scrolls under a still pointer must not take the selection.
         var pointer = NSPoint(x: 400, y: 300)
-        history.view.pointer = { pointer }
+        history.view.canvas.pointer = { pointer }
         history.close(); history.hotKeyPressed()
         canvas.tiles[3].onHover?()
         check(history.selectedEntry === store.entries[0], "a row under the resting pointer does not replace the newest entry")
@@ -260,7 +261,7 @@ import AppKit
         let sendEntry = history.selectedEntry!
         check(sendEntry.kind != .image && sendEntry.fileURLs.isEmpty, "fixture selection is plain text")
         press(48)
-        check(history.isSending && panel.firstResponder === sendTo && !sendTo.isHidden && history.view.card.isHidden, "Tab opens Send to beside the selected row")
+        check(history.isSending && panel.firstResponder === sendTo && !sendTo.isHidden && !history.view.showsCard, "Tab opens Send to beside the selected row")
         check(!press(53) && history.isSending, "while choosing an app, the list's keys belong to Send to")
         check(sendTo.targets == [.paste(pid: 900, name: "Notes", app: nil), .paste(pid: 500, name: "Zed", app: nil)], "text can only be pasted into running apps")
         check(history.view.footer.items.map(\.title) == ["Send ⏎", "Back ←"], "Send to names its own keys")
@@ -269,7 +270,7 @@ import AppKit
         history.hotKeyPressed(); check(sendTo.selected?.name == "Notes", "the window's shortcut steps through apps and wraps")
         sendTo.keyDown(with: key(6, characters: "z")); check(sendTo.selected?.name == "Zed", "typing a name jumps to that app")
         sendTo.keyDown(with: key(123))
-        check(!history.isSending && history.isVisible && typingInSearch && history.selectedEntry === sendEntry && !history.view.card.isHidden, "Left goes back to the same selected row")
+        check(!history.isSending && history.isVisible && typingInSearch && history.selectedEntry === sendEntry && history.view.showsCard, "Left goes back to the same selected row")
         check(search.stringValue == "trip" && search.currentEditor()?.selectedRange == NSRange(location: 4, length: 0), "the search is kept, with the caret at its end")
         press(48); sendTo.keyDown(with: key(53))
         check(!history.isSending && history.isVisible && history.selectedEntry === sendEntry, "Esc goes back without closing the window")
@@ -279,7 +280,7 @@ import AppKit
 
         // A picture can also be opened in an app.
         history.hotKeyPressed()
-        check(history.view.footer.items.count == 6, "reopening restores the browsing actions")
+        check(history.view.footer.items.count == 7, "reopening restores the browsing actions")
         canvas.choose(picture.id); press(48)
         check(sendTo.targets.count == 3 && sendTo.targets[0].isOpen && sendTo.targets[0].name == "Preview" && !sendTo.targets[1].isOpen, "a picture lists apps that open it first, one row per app")
         if case .open(_, let items) = sendTo.targets[0] { check(items.count == 1 && items[0].pathExtension == "tiff", "the picture is opened from a derived file") }
@@ -291,7 +292,7 @@ import AppKit
         let countBeforeDelete = store.entries.count
         press(51, .command)
         check(canvas.armedID == doomed.id && store.entries.count == countBeforeDelete && canvas.selected?.isArmed == true, "first ⌘⌫ only arms the row")
-        check(history.view.footer.hint.hasSuffix("esc keeps"), "while a delete waits, Esc says it keeps the item")
+        check(!history.view.footer.hintText.lowercased().contains("esc"), "while a delete waits the hint explains no Esc; the row asks with its keys")
         press(53)
         check(canvas.armedID == nil && history.isVisible && store.entries.count == countBeforeDelete, "Esc keeps the row and the window")
         press(51, .command); press(125)
@@ -356,12 +357,16 @@ import AppKit
         check(!drawer.isVisible && !drawer.sendToPopover.isVisible && posted == [900] && store.entries[0] === tileEntry, "Return sends from the drawer and closes it")
         drawer.show(on: NSScreen.main!)
         var deleteRequests: [UUID] = []
-        drawerCanvas.onDelete = { deleteRequests.append($0.id) }
+        let drawerPerform = drawer.browser.perform
+        drawer.browser.perform = { action, entry in
+            guard action == .delete, let entry else { return drawerPerform(action, entry) }
+            deleteRequests.append(entry.id); return true
+        }
         drawerPanel.makeFirstResponder(drawerCanvas)
         let selectedTile = drawerCanvas.selected!.entry.id
         drawerCanvas.keyDown(with: key(51, .command)); drawerCanvas.keyDown(with: key(51))
         check(deleteRequests == [selectedTile, selectedTile], "⌘⌫ and ⌫ both ask to delete the selected tile")
-        check(!drawer.handleDrawerKey(key(48)) && ClipboardTileTooltip.legendText.contains("Send to ← Tab") && ClipboardTileTooltip.legendText.contains("Delete ← ⌫ or ⌘⌫"), "the tile help lists Send to and both delete keys")
+        check(!drawer.handleDrawerKey(key(48)) && ClipboardTileTooltip.legendText(.drawer, asker: nil).contains("Send to ← Tab") && ClipboardTileTooltip.legendText(.drawer, asker: nil).contains("Delete ← ⌫ or ⌘⌫"), "the tile help lists Send to and both delete keys")
         let confirm = NSButton(title: "Delete Permanently", target: nil, action: nil)
         ClipboardDrawerController.acceptCommandDelete(confirm)
         check(confirm.performKeyEquivalent(with: key(51, .command, characters: "\u{7F}")) && !confirm.performKeyEquivalent(with: key(51, characters: "\u{7F}")) && !confirm.performKeyEquivalent(with: key(36, characters: "\r")),
@@ -375,37 +380,33 @@ import AppKit
         check(beside.minX == 388 && beside.size == NSSize(width: 260, height: 300) && beside.maxY <= 892, "a companion beside the drawer follows its row and stays on the display")
         check(anchor.frame == anchor.frame(fitting: ClipboardDrawerPreviewAnchor.preferredSize), "the large preview keeps its own placement")
 
-        // ⇧⌘⌫ twice deletes all history; anything else keeps it. Last: it empties the store.
+        // Delete all is gone (Al, 2026-10-12: not to be encouraged): ⇧⌘⌫ asks nothing and deletes
+        // nothing; only the menu's Clear History deletes everything. Last: that empties the store.
         drawer.hide(animated: false)
         history.hotKeyPressed()
         let total = store.entries.count
+        check(ClipboardKeymap.window.action(for: key(51, [.shift, .command])) == nil && ClipboardKeymap.window.bindings.allSatisfy { $0.label?.shown != "⇧⌘⌫" },
+              "⇧⌘⌫ is no longer one of the window's keys")
         press(51, .command)
-        check(press(51, [.shift, .command]) && history.isConfirmingDeleteAll && canvas.armedID == nil, "⇧⌘⌫ asks about everything, replacing a waiting row delete")
-        check(!history.view.confirmation.isHidden && history.view.card.isHidden && history.view.confirmation.titleText == "Delete all \(total) clipboard items?" && store.entries.count == total,
-              "the question takes the card's place; nothing is deleted yet")
-        check(history.view.footer.hint.hasSuffix("esc keeps"), "while it waits, Esc says it keeps everything")
-        press(53)
-        check(!history.isConfirmingDeleteAll && history.isVisible && !history.view.card.isHidden && store.entries.count == total, "Esc keeps everything and the window")
-        press(51, [.shift, .command]); press(0, [], "a")
-        check(!history.isConfirmingDeleteAll && store.entries.count == total, "typing keeps everything")
-        type("trip"); press(51, [.shift, .command])
-        check(history.view.confirmation.titleText == "Delete all \(total) clipboard items?", "the question counts the whole history, not only the matches")
-        type("")
-        check(!history.isConfirmingDeleteAll, "changing the search keeps everything")
-        history.view.deleteAll.performClick(nil)
-        check(history.isConfirmingDeleteAll, "the Delete all button asks too")
-        press(51, [.shift, .command])
+        check(!press(51, [.shift, .command]) && canvas.armedID == nil && store.entries.count == total && history.isVisible && history.view.showsCard,
+              "⇧⌘⌫ deletes nothing and asks nothing; like any other key it lets go of a waiting row delete")
+        check(!history.view.subviews.contains { ($0 as? NSButton)?.title.hasPrefix("Delete all") == true }
+              && !history.view.footer.items.contains { $0.title.contains("all") }, "no Delete all button, in the header or the footer")
+        drawer.confirmDeletion = { _, _ in true }
+        drawer.confirmClear()
         check(store.entries.isEmpty && history.isVisible && history.view.emptyText == "Copy something to begin" && history.view.countText.hasPrefix("0 of 0 items"),
-              "the second ⇧⌘⌫ deletes everything; the window stays open and says so")
-        check(press(51, [.shift, .command]) && !history.isConfirmingDeleteAll, "an empty history has nothing to delete")
+              "the menu's Clear History deletes everything; the open window says so")
         check(press(36) && press(8, .command, "c") && history.isVisible && store.liftedEntryID == nil, "Return and ⌘C on an empty history do nothing")
         openingChecks()
+        deletionChecks()
+        armedRowChecks()
+        searchReportChecks()
         searchUndoChecks()
         keyboardReturnChecks()
         magnetChecks()
         webCopyChecks()
-        check(ClipboardHistoryCommand.command(for: key(3, [.command], characters: "f")) == .find, "Command-F is the window's search key")
-        check(ClipboardHistoryCommand.command(for: key(3, [.command, .shift], characters: "f")) == nil, "Shift-Command-F is left alone")
+        check(ClipboardKeymap.window.action(for: key(3, [.command], characters: "f")) == .find, "Command-F is the window's search key")
+        check(ClipboardKeymap.window.action(for: key(3, [.command, .shift], characters: "f")) == nil, "Shift-Command-F is left alone")
         print("PASS: \(assertions) history-window/paste/send-to/opening assertions; named board, injected delivery, no input injection")
     }
 
@@ -438,7 +439,7 @@ import AppKit
         settings.magnetsEnabled = true
         check(settings.showsMagnet(for: .window) && !settings.showsMagnet(for: .copy), "turning the switch back on keeps the per-source choices")
 
-        let suite = "ClipEdge-magnet-tests-" + UUID().uuidString
+        let suite = ClipboardMaterializer.privateSuiteName("ClipEdge-magnet-tests-")
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         let saved = ClipboardRevealSettings(defaults: defaults)
@@ -463,7 +464,7 @@ import AppKit
         store.cancelStaging()
 
         let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-magnet-tests-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-magnet-tests-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
                                                  previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
@@ -494,14 +495,14 @@ import AppKit
             for _ in 0..<steps { views.append(views.last!.nextKeyView!) }
             return views
         }
-        let modePicker = descendants(content).compactMap { $0 as? NSPopUpButton }.first { $0.accessibilityLabel() == "Reveal mode" }!
-        check(loop(from: master, steps: 4).elementsEqual([master] + sources + [modePicker], by: ===),
+        let firstControl = boxes.first { $0.title == "Hide drawer tab" }!
+        check(loop(from: master, steps: 4).elementsEqual([master] + sources + [firstControl], by: ===),
               "the keyboard goes from the switch through each choice, then back to the top")
         let tall = controller.window!.frame.height
         master.state = .off; _ = master.sendAction(master.action, to: master.target)
         check(!settings.magnetsEnabled && sources.allSatisfy(\.isHiddenOrHasHiddenAncestor), "turning the switch off hides the three choices")
         check(controller.window!.frame.height < tall, "the window shrinks to fit")
-        check(master.nextKeyView === modePicker, "with the switch off, the keyboard skips the hidden choices")
+        check(master.nextKeyView === firstControl, "with the switch off, the keyboard skips the hidden choices")
         master.state = .on; _ = master.sendAction(master.action, to: master.target)
         content.layoutSubtreeIfNeeded()
         sources[1].state = .off; _ = sources[1].sendAction(sources[1].action, to: sources[1].target)
@@ -532,7 +533,7 @@ import AppKit
         environment.schedule = { _, action in scheduled.append(action) }
         environment.failed = { fatalError("FAIL: a web copy's paste was refused") }
         let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-web-history-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-web-history-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: environment),
                                                  previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
@@ -585,14 +586,14 @@ import AppKit
         ClipboardDemo.seed(store, board: board)
         ["Trip: pack a notebook", "Trip: book a room"].forEach(copy)
         let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 700, height: 440), styleMask: [], backing: .buffered, defer: true)
-        let materializer = ClipboardMaterializer(root: FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-opening-tests-\(UUID().uuidString)"))
+        let materializer = ClipboardMaterializer(root: ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-opening-tests-\(UUID().uuidString)"))
         defer { materializer.removeAll() }
         let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
                                                  previewService: ClipboardPreviewService(materializer: materializer), panel: panel)
         history.prepare = { nil }
         history.openInPreview = { _, done in done(nil) }
         let search = history.view.search
-        func type(_ query: String) { search.stringValue = query; history.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
+        func type(_ query: String) { search.stringValue = query; history.view.search.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification)) }
         var selectedText: NSRange? { (panel.firstResponder as? NSTextView)?.selectedRange() }
         func opensFresh() -> Bool {
             search.stringValue.isEmpty && history.view.currentTab == .all && history.visibleEntries.count == store.entries.count &&
@@ -600,7 +601,7 @@ import AppKit
         }
 
         history.hotKeyPressed()
-        _ = history.handleKey(key(20, .command, characters: "3"))
+        _ = history.handleKey(key(18, .command, characters: "1"))
         type("trip")
         _ = history.handleKey(key(125))
         let trip = history.selectedEntry!
@@ -634,12 +635,244 @@ import AppKit
 }
 
 extension HistoryTests {
+    /// Deleting one entry, alike in the drawer and the window (Al, 2026-10-11): the entry that moves
+    /// into its place is chosen.
+    static func deletionChecks() {
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        defer { store.stop(); board.releaseGlobally() }
+        for text in ["Alder", "Birch", "Cedar", "Dogwood", "Elm", "Fir"] {
+            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging()
+        }
+        let magnet = ClipboardMagnetController(panel: HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true), commandClickEnabled: false)
+        let drawerPanel = HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
+        let drawer = ClipboardDrawerController(store: store, magnetController: magnet, panel: drawerPanel, defaults: nil)
+        defer { drawer.stop() }
+        var asked = 0, questions: [String] = []
+        drawer.confirmDeletion = { question, _ in asked += 1; questions.append(question); return true }
+        drawer.show(on: NSScreen.main!)
+        let cards = drawer.browser.canvas
+        drawerPanel.makeFirstResponder(cards)
+        let doomed = store.entries[2], next = store.entries[3]
+        cards.choose(doomed.id)
+        cards.keyDown(with: key(51, .command))
+        check(asked == 1 && !store.entries.contains { $0 === doomed }, "the drawer asks once, then deletes the chosen card")
+        check(cards.selected?.entry === next, "the drawer chooses the card that moved into the deleted one's place (\(cards.selected?.entry.title ?? "none"))")
+        let last = store.entries.last!
+        cards.choose(last.id)
+        cards.keyDown(with: key(51, .command))
+        check(cards.selected?.entry === store.entries.last, "after the last card, the one now last is chosen")
+        drawer.hide(animated: false)
+
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 470), styleMask: [], backing: .buffered, defer: true)
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: drawer.previewService, panel: panel)
+        history.prepare = { nil }
+        history.hotKeyPressed()
+        let rows = history.view.canvas
+        let gone = store.entries[1], after = store.entries[2]
+        rows.choose(gone.id)
+        _ = history.handleKey(key(51, .command)); _ = history.handleKey(key(51, .command))
+        check(!store.entries.contains { $0 === gone } && rows.selected?.entry === after, "the window chooses the row that moved into the deleted one's place")
+        // One wording for each delete question, in the drawer's alert and the window's armed row and panel.
+        _ = history.handleKey(key(51, .command))
+        let armedRow = rows.selected!, armed = armedRow.accessibilityLabel() ?? ""
+        check(questions.first == "Delete permanently?" && armed == "\(armedRow.entry.title). Delete permanently? Command-Delete again deletes",
+              "the drawer and the window ask the same about one item, and VoiceOver hears which item and the keys in words (\(questions.first ?? "none") / \(armed))")
+        _ = history.handleKey(key(53))
+        check(armedRow.accessibilityLabel() == "\(armedRow.entry.title), copied \(armedRow.entry.fullDateTimeStamp)", "Esc gives the row its own label back")
+        let total = store.entries.count
+        history.close()
+        drawer.show(on: NSScreen.main!)
+        drawer.confirmDeletion = { question, _ in questions.append(question); return false }
+        drawer.confirmClear()
+        check(questions.last == "Delete all \(total) clipboard items?" && store.entries.count == total,
+              "the menu's Clear History asks about everything with its count, keeping everything when told to")
+        drawer.hide(animated: false)
+        unsavedDeletionChecks()
+    }
+
+    /// 🚨 A delete waits only on the row it asked about. Choosing another row, by the pointer, an
+    /// arrow or a tab that hides it, lets go of the question everywhere at once: the row, the footer's
+    /// Esc hint and the next ⌘⌫, which only asks again (review, 2026-10-11: the pointer's choice
+    /// cleared the row's red question while one more ⌘⌫ still deleted it).
+    static func armedRowChecks() {
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        defer { store.stop(); board.releaseGlobally() }
+        for text in ["Alder", "Birch", "Cedar", "Dogwood"] {
+            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging()
+        }
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 470), styleMask: [], backing: .buffered, defer: true)
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: ClipboardPreviewService(), panel: panel)
+        history.prepare = { nil }
+        let rows = history.view.canvas
+        // The pointer moves onto each row it hovers, so hovering chooses.
+        var pointer = NSPoint(x: 10, y: 10)
+        rows.pointer = { pointer }
+        func hover(_ index: Int) { pointer.x += 5; rows.tiles[index].onHover?() }
+        func press(_ code: UInt16, _ modifiers: NSEvent.ModifierFlags = []) { _ = history.handleKey(key(code, modifiers)) }
+        func tab(_ tab: ClipboardBrowserTab) {
+            history.view.tabs.selectedSegment = tab.rawValue
+            history.view.tabs.sendAction(history.view.tabs.action!, to: history.view.tabs.target)
+        }
+        /// A row is asking (it shows the question and its keys; the footer no longer says so).
+        func waiting() -> Bool { rows.tiles.contains(where: \.isArmed) }
+        history.hotKeyPressed()
+        let asked = rows.tiles[1].entry, other = rows.tiles[2].entry
+        rows.choose(asked.id)
+        press(51, .command)
+        check(rows.armedID == asked.id && rows.tiles[1].isArmed && waiting(), "the first ⌘⌫ asks about the chosen row")
+        hover(2)
+        check(rows.selected?.entry === other && rows.armedID == nil && !rows.tiles[1].isArmed && !waiting(),
+              "the pointer choosing another row lets go of the question")
+        hover(1)
+        check(rows.armedID == nil && !rows.tiles[1].isArmed && !waiting(), "and coming back finds nothing waiting")
+        press(51, .command)
+        check(store.entries.contains { $0 === asked } && rows.armedID == asked.id && waiting(), "so ⌘⌫ there asks again, deleting nothing")
+        press(125)
+        check(rows.selected?.entry === other && rows.armedID == nil && !waiting(), "an arrow choosing another row lets go of it too")
+        press(126); press(51, .command)
+        check(store.entries.contains { $0 === asked } && rows.armedID == asked.id, "and back with an arrow, ⌘⌫ asks again")
+        tab(.images)
+        check(rows.tiles.isEmpty && rows.armedID == nil && !waiting(), "a tab that hides the row lets go of it")
+        tab(.all)
+        check(rows.armedID == nil && !rows.tiles.contains { $0.isArmed } && !waiting(), "and showing it again finds nothing waiting")
+        rows.choose(asked.id)
+        press(51, .command); press(51, .command)
+        check(!store.entries.contains { $0 === asked } && rows.armedID == nil && !waiting(), "two ⌘⌫ on the same row delete it")
+        history.close()
+
+        // The drawer asks in an alert, which holds nothing once answered: a kept card's next ⌘⌫
+        // asks again, and a card the pointer chooses while the alert asks is not the one deleted.
+        let magnet = ClipboardMagnetController(panel: HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true), commandClickEnabled: false)
+        let drawerPanel = HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
+        let drawer = ClipboardDrawerController(store: store, magnetController: magnet, panel: drawerPanel, defaults: nil)
+        defer { drawer.stop() }
+        let cards = drawer.browser.canvas
+        cards.pointer = { pointer }
+        drawer.show(on: NSScreen.main!)
+        drawerPanel.makeFirstResponder(cards)
+        var asks = 0
+        drawer.confirmDeletion = { _, _ in asks += 1; return false }
+        let kept = cards.tiles[0].entry
+        cards.choose(kept.id)
+        cards.keyDown(with: key(51, .command))
+        pointer.x += 5; cards.tiles[1].onHover?()
+        pointer.x += 5; cards.tiles[0].onHover?()
+        cards.keyDown(with: key(51, .command))
+        check(asks == 2 && store.entries.contains { $0 === kept }, "the drawer asks each time; a kept card waits on nothing")
+        let named = cards.tiles[0].entry, hovered = cards.tiles[1].entry
+        drawer.confirmDeletion = { _, _ in pointer.x += 5; cards.tiles[1].onHover?(); return true }
+        cards.keyDown(with: key(51, .command))
+        check(!store.entries.contains { $0 === named } && store.entries.contains { $0 === hovered },
+              "the drawer deletes the card it asked about, not one the pointer chose while it asked")
+        drawer.hide(animated: false)
+    }
+
+    /// One typed letter filters each list once. The search used to report a letter twice, as its
+    /// text changed and again a moment later as its action, so each list was rebuilt twice and the
+    /// window chose its newest match again, undoing an arrow pressed in that moment (review,
+    /// 2026-10-11).
+    static func searchReportChecks() {
+        let board = NSPasteboard.withUniqueName()
+        let store = ClipboardStore(pasteboard: board, persistenceURL: nil)
+        defer { store.stop(); board.releaseGlobally() }
+        // Only these hold an x, which no date does.
+        for text in ["Ash", "Xylem", "Box", "Oxeye"] {
+            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging()
+        }
+        func typeLetter(_ letter: String, in window: NSWindow) {
+            (window.firstResponder as? NSTextView)?.insertText(letter, replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+        let magnet = ClipboardMagnetController(panel: HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true), commandClickEnabled: false)
+        let drawerPanel = HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
+        let drawer = ClipboardDrawerController(store: store, magnetController: magnet, panel: drawerPanel, defaults: nil)
+        defer { drawer.stop() }
+        drawer.show(on: NSScreen.main!)
+        let drawerList = drawer.browser.list
+        var drawerChanges = 0
+        let drawerShows = drawerList.onFilterChange
+        drawerList.onFilterChange = { drawerChanges += 1; drawerShows($0) }
+        drawerList.focusSearch(selectingAll: true)
+        typeLetter("x", in: drawerPanel)
+        runLoopPass()
+        check(drawerChanges == 1 && drawerList.visibleEntries.count == 3, "one letter typed in the drawer's search filters its list once (\(drawerChanges))")
+        drawerList.search.stringValue = ""
+        drawerList.search.sendAction(drawerList.search.action, to: drawerList.search.target)
+        runLoopPass()
+        check(drawerChanges == 2 && drawerList.visibleEntries.count == 4, "the clear button, which sends only the action, still shows everything again")
+        drawer.hide(animated: false)
+
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 470), styleMask: [], backing: .buffered, defer: true)
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: drawer.previewService, panel: panel)
+        history.prepare = { nil }
+        history.hotKeyPressed()
+        let list = history.view.list
+        var changes = 0
+        let shows = list.onFilterChange
+        list.onFilterChange = { changes += 1; shows($0) }
+        typeLetter("x", in: panel)
+        let matches = list.visibleEntries
+        check(matches.map(\.title) == ["Oxeye", "Box", "Xylem"] && history.selectedEntry === matches[0], "a letter in the window's search chooses its newest match")
+        _ = history.handleKey(key(125))
+        runLoopPass()
+        check(changes == 1 && history.selectedEntry === matches[1], "it filters once, so an arrow pressed just after keeps its row (\(changes) filters, \(history.selectedEntry?.title ?? "none") chosen)")
+        _ = history.handleKey(key(53))
+        changes = 0
+        typeLetter("x", in: panel)
+        runLoopPass()
+        check(changes == 1 && list.visibleEntries.count == 3, "after Esc empties the search, the same letter typed again filters again, once")
+        history.close()
+    }
+
+    /// A deletion that cannot be saved says so, with the same error in both containers.
+    static func unsavedDeletionChecks() {
+        let blocker = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-unsaveable-\(UUID().uuidString)")
+        FileManager.default.createFile(atPath: blocker.path, contents: Data())
+        defer { try? FileManager.default.removeItem(at: blocker) }
+        let board = NSPasteboard.withUniqueName()
+        // Its folder is a file, so nothing it saves can be written.
+        let store = ClipboardStore(pasteboard: board, persistenceURL: blocker.appendingPathComponent("history.plist"))
+        defer { store.stop(); board.releaseGlobally() }
+        for text in ["Ash", "Beech", "Chestnut", "Date"] {
+            board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging()
+        }
+        var errors: [String] = []
+        let magnet = ClipboardMagnetController(panel: HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true), commandClickEnabled: false)
+        let drawerPanel = HistoryTestPanel(contentRect: .zero, styleMask: [], backing: .buffered, defer: true)
+        let drawer = ClipboardDrawerController(store: store, magnetController: magnet, panel: drawerPanel, defaults: nil)
+        defer { drawer.stop() }
+        drawer.confirmDeletion = { _, _ in true }
+        drawer.onError = { errors.append($0.localizedDescription) }
+        drawer.show(on: NSScreen.main!)
+        drawerPanel.makeFirstResponder(drawer.browser.canvas)
+        drawer.browser.canvas.keyDown(with: key(51, .command))
+        check(errors == [ClipEdgeError.cannotDelete.localizedDescription], "the drawer says a deletion could not be saved (\(errors))")
+        drawer.hide(animated: false)
+
+        let panel = HistoryTestPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 470), styleMask: [], backing: .buffered, defer: true)
+        let history = ClipboardHistoryController(store: store, paster: ClipboardPaster(store: store, environment: .inert),
+                                                 previewService: drawer.previewService, panel: panel)
+        history.prepare = { nil }
+        history.onError = { errors.append($0.localizedDescription) }
+        history.hotKeyPressed()
+        _ = history.handleKey(key(51, .command)); _ = history.handleKey(key(51, .command))
+        check(errors.count == 2 && errors[1] == errors[0], "and so does the window, with the same words, not only a beep (\(errors))")
+        for text in ["Elder", "Fig"] { board.clearContents(); board.setString(text, forType: .string); _ = store.saveNow(); store.cancelStaging() }
+        drawer.confirmClear()
+        check(errors.count == 3 && Set(errors).count == 1 && store.entries.isEmpty, "the menu's Clear History says so too when it cannot be saved (\(errors.count))")
+        history.close()
+    }
+
     /// Typing left in the search when the window closed (Tab to Send to, then away) is
     /// not undone against the next opening's empty search, which threw NSRangeException.
     /// The real window class, isolated, since its field editor shares the window's undo.
     static func searchUndoChecks() {
         let marker = "CLIPEDGE_TEST_PREVIEW_ROOT", previous = ProcessInfo.processInfo.environment[marker]
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ClipEdge-search-undo-\(UUID().uuidString)")
+        let root = ClipboardMaterializer.defaultRoot.deletingLastPathComponent().appendingPathComponent("ClipEdge-search-undo-\(UUID().uuidString)")
         setenv(marker, root.path, 1)
         defer {
             if let previous { setenv(marker, previous, 1) } else { unsetenv(marker) }
@@ -664,6 +897,16 @@ extension HistoryTests {
         history.hotKeyPressed()
         check(history.view.search.stringValue.isEmpty && panel.undoManager?.canUndo == false, "reopening leaves no undo that would bring back an old search")
         check(panel.performKeyEquivalent(with: key(6, .command, characters: "z")) && history.view.search.stringValue.isEmpty, "⌘Z then leaves the empty search as it is")
+        // Esc's clearing does the same, as the drawer's does, even with the keyboard off the search
+        // (on the card's text, which a click selects): AppKit drops the typing's undo only while editing.
+        (panel.firstResponder as? NSTextView)?.insertText("swim", replacementRange: NSRange(location: NSNotFound, length: 0))
+        runLoopPass()
+        check(history.view.search.stringValue == "swim" && panel.undoManager?.canUndo == true, "typing again can be undone")
+        let cardText = history.view.card.subviews.compactMap { $0 as? NSTextField }.first { $0.isSelectable && !$0.isHidden }!
+        panel.makeFirstResponder(cardText)
+        _ = history.handleKey(key(53))
+        check(history.isVisible && history.view.search.stringValue.isEmpty && panel.undoManager?.canUndo == false,
+              "Esc empties the search and leaves no undo that would bring its typing back (undo left: \(panel.undoManager?.canUndo == true))")
         history.close()
     }
 

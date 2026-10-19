@@ -50,6 +50,10 @@ import AppKit
     static func decode(_ json: [String: Any]) throws -> PublishReply {
         try PublishReply.decode(JSONSerialization.data(withJSONObject: json), runningFingerprint: fingerprint)
     }
+    /// The message a refused reply shows, nil when it decodes.
+    static func refusal(_ json: [String: Any]) -> String? {
+        do { _ = try decode(json); return nil } catch { return (error as? PublishFailure)?.errorDescription }
+    }
 
     @MainActor static func main() async throws {
         boundary()
@@ -78,6 +82,17 @@ import AppKit
         unsafe = ready; unsafe["archiveSHA256"] = "short"
         check((try? decode(unsafe)) == nil, "prepared archive requires a full digest")
         check((try? PublishReply.decode(Data("html".utf8), runningFingerprint: fingerprint)) == nil, "invalid JSON is refused")
+        // 2026-10-13: 19,562 characters of notes were refused as "missing a valid changes" after a full preparation.
+        var notes = ready; notes["changes"] = String(repeating: "Detailed note. ", count: 1_304)
+        if case .ready(let candidate)? = try? decode(notes) { check(candidate.changes == notes["changes"] as? String, "long release notes arrive whole") }
+        else { check(false, "release notes as long as the 2026-10-13 ones are accepted") }
+        notes["changes"] = String(repeating: "x", count: PublishLimits.releaseNotes + 1)
+        check(refusal(notes) == "The release helper sent release notes longer than ClipEdge accepts (125,001 characters; at most 125,000).",
+              "notes over a release's limit are refused, saying what and by how much")
+        notes.removeValue(forKey: "changes")
+        check(refusal(notes) == "The release helper's response has no release notes.", "a missing field is named in words")
+        var noVersion = equal; noVersion.removeValue(forKey: "latestVersion")
+        check(refusal(noVersion) == "The release helper's response has no latest version number.", "every field has a name in words")
         let info: [String: Any] = ["ClipEdgePublisherEnabled": true, "ClipEdgeContentFingerprint": fingerprint,
             "ClipEdgePublisherTool": "/Users/al/amaanah/projects/clipedge/src/tools/publisher.sh"]
         check(PublishCapability.resolve(info: info, fileExists: { _ in true }) != nil, "explicit local maintainer capability is accepted")
