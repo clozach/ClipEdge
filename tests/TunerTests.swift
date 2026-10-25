@@ -308,10 +308,10 @@ import AppKit
         check(!tuner.hasAmbiguousLayout && !tuner.undoMagnet.hasAmbiguousLayout && !tuner.redoMagnet.hasAmbiguousLayout && !tuner.hoverRegion.hasAmbiguousLayout,
               "the tuner's layout is settled, its magnets and hover region too")
 
-        // The tuner's field: label above, then a 28-point field of handle, hairline and number.
+        // The tuner's field: label above, then a 22-point field of handle, hairline and number.
         let field = rect(tuner.field), handle = rect(tuner.handle), divider = rect(tuner.divider), entry = rect(tuner.entry), label = rect(tuner.titleLabel)
         check(label.minY >= field.maxY && label.minY <= field.maxY + 4, "the label sits just above the field (\(label.minY - field.maxY) points)")
-        check(field.height == ClipboardTuner.fieldHeight && tuner.field.surface.radius == 6, "the field is 28 points tall with 6-point corners")
+        check(field.height == ClipboardTuner.fieldHeight && tuner.field.surface.radius == 6, "the field is 22 points tall with 6-point corners")
         check(handle.minX == field.minX && handle.width == ClipboardTuner.handleWidth && divider.minX == handle.maxX && divider.width == 1 && divider.height == field.height,
               "the field reads handle, a hairline, then the number")
         check(tuner.divider.surface.fill?.color == .separatorColor, "the hairline is the separator color")
@@ -319,7 +319,7 @@ import AppKit
         let undo = rect(tuner.undoMagnet), redo = rect(tuner.redoMagnet), bounds = rect(tuner)
         let labelHeight = aligned(tuner.titleLabel, in: content).height
         check(abs(bounds.height - (labelHeight + ClipboardTuner.labelGap + ClipboardTuner.fieldHeight)) < 0.5,
-              "the tuner is its label, 3 points, then the 28-point field: no room kept for magnets (\(bounds.height) points, label \(labelHeight))")
+              "the tuner is its label, 2 points, then the 22-point field: no room kept for magnets (\(bounds.height) points, label \(labelHeight))")
         check(abs(undo.maxX - field.maxX) < 0.5 && abs(undo.minY - field.maxY - ClipboardTuner.magnetGap) < 0.5,
               "Undo's magnet sits 9 points above the field, its right edge on the field's (\(undo), field \(field))")
         check(abs(redo.maxX - (undo.minX - ClipboardTuner.magnetSpacing)) < 0.5 && redo.minY == undo.minY && redo.height == undo.height,
@@ -557,11 +557,11 @@ import AppKit
               "\(moment): every field's magnets share one layer over everything in Settings, and the four share ⌘Z")
         for tuner in tuners {
             let frame = rect(tuner)
-            check(!tuner.hasAmbiguousLayout && frame.width > 150 && frame.height > 40 && content.bounds.contains(frame), "\(moment): \(tuner.spec.label) sits inside the window")
+            check(!tuner.hasAmbiguousLayout && frame.width > 150 && frame.height > ClipboardTuner.fieldHeight + 12 && content.bounds.contains(frame), "\(moment): \(tuner.spec.label) sits inside the window")
             let labelHeight = aligned(tuner.titleLabel, in: content).height
             let line = tuner.titleLabel.font!.boundingRectForFont.height
             check(labelHeight < line * 1.5 && abs(frame.height - (labelHeight + ClipboardTuner.labelGap + ClipboardTuner.fieldHeight)) < 0.5,
-                  "\(moment): \(tuner.spec.label) is its label on one line, 3 points and its field, \(frame.height) points, with nothing kept for magnets")
+                  "\(moment): \(tuner.spec.label) is its label on one line, 2 points and its field, \(frame.height) points, with nothing kept for magnets")
             check(rect(tuner.undoMagnet).maxY > frame.maxY + 1 && abs(rect(tuner.undoMagnet).minY - rect(tuner.field).maxY - ClipboardTuner.magnetGap) < 0.5
                   && abs(rect(tuner.redoMagnet).maxX - (rect(tuner.undoMagnet).minX - ClipboardTuner.magnetSpacing)) < 0.5 && content.bounds.contains(rect(tuner.undoMagnet)),
                   "\(moment): \(tuner.spec.label)'s magnets sit 9 points above its field, reaching past its top, inside the window")

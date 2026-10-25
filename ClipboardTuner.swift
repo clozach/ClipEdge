@@ -16,10 +16,12 @@ enum ClipboardTunerScrub {
 /// take no room. While one tuner of its group has the keyboard, only that tuner shows
 /// magnets, since ⌘Z reaches it alone.
 final class ClipboardTuner: NSControl, NSTextFieldDelegate {
-    static let fieldHeight: CGFloat = 28
-    static let handleWidth: CGFloat = 28
+    /// Compacted 2026-10-24 (Al: no tuner "made from 50% wasted pixels"): the field and its handle
+    /// are 22 points, the web bloom tuner's new size; the label sits 2 points above.
+    static let fieldHeight: CGFloat = 22
+    static let handleWidth: CGFloat = 22
     /// The label sits this close above the field.
-    static let labelGap: CGFloat = 3
+    static let labelGap: CGFloat = 2
     /// The magnets' distance above the field.
     static let magnetGap: CGFloat = 9
     /// The label ends this far short of the magnets' slots.

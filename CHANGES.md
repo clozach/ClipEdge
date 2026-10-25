@@ -1,6 +1,6 @@
 # What's new in ClipEdge
 
-## 2.3.3
+## 2.3.4
 
 - **The drawer shows its whole list as it opens.** Since long lists started building only the rows near what's on screen, opening the drawer could show just its first row until you searched or scrolled. It now builds every row it shows.
 - **The search key is `/`.** In the drawer, press `/` (as in Gmail) to go to the search instead of F; ⌘F still works.
