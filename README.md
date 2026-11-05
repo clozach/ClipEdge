@@ -1,76 +1,55 @@
 # ClipEdge
 
-Built for Mac* noobs and power users.
-A clipboard history for the Mac that lives at the edge of your screen.
+**A clipboard history for Mac newcomers and keyboard fiends alike.**
 
-*I made ClipEdge for myself†, and I happen to use a Mac, but it should be easy enough to fork it and vibe-code it to work on your platform of choice. What makes
+> **Copy now. Find it when you need it.**
 
-†Actually, I made ClipEdge for my mom, who was wasting endless time making semi-confused trips around the windows on her Mac looking for the _next_ thing she needed to move from one place to another. I wanted a clipboard history tool that she could use right out of the box, but that meant I'd have to test it, and if i was going to test it, it would have to meet my needs as a keyboard fiend. Thus what started (and continues) as a clipboard history drawer expanded into the most powerful clipboard history tool I've ever seen, all vibe-coded under heavy use. That said, please see the caveats section…I have not had the time to read this code…it just works really well on my machine.
+![ClipEdge in action: the drawer slides open, browses text, pictures and files, then the keyboard window browses the same fictional history.](docs/demo/demo.gif)
 
-## Why ClipEdge
+ClipEdge remembers copied text, pictures, links and files. Reach for the drawer at your screen's edge, or open a searchable window without leaving your work.
 
-Here's what makes it different.
+**[Get ClipEdge →](#try-clipedge)** · [Latest release](https://github.com/clozach/ClipEdge/releases/latest) · [Controls](#first-launch-on-this-mac) · [MIT license](LICENSE)
 
-## For noobs
+## Keep your train of thought
 
-Alt terms for noobs? -Al
+- **Copy a few things. Paste when you're ready.** Bring back an earlier message, picture or file. Use the [drawer with your mouse](#drawer-controls) or the [keyboard window](#first-launch-on-this-mac).
+- **Find the words inside a screenshot.** Search text, links and text recognized in pictures. Image recognition happens on your Mac. [Search and previews ↓](#search-and-previews)
+- **Keep the original—or just the words.** Reuse an item's saved formats, paste without styling, or select several entries and combine their plain text. [Copying and pasting ↓](#copying-and-pasting)
+- **Keep your clipboard on your Mac.** No account, subscription, analytics or clipboard upload. Released copies offer optional automatic updates. [Privacy and storage ↓](#privacy-and-storage)
 
-### Privacy-focussed
+## Try ClipEdge
 
-- **Quiet about secrets.** Copies that password managers mark concealed or transient are never recorded.
-- **Nothing leaves your Mac.** No server, no account, no subscription, no analytics. Build it from source and it makes no network connections at all. A released copy asks GitHub for updates once a day, and only if you turn on automatic updates in Settings.
+**On a Mac with a coding assistant that can use Terminal**, paste this:
 
-  For each section, #link to the more detailed instructions/explanation further down the page. -Al
+> Install https://github.com/clozach/ClipEdge using its latest signed release. Follow its AGENTS.md and complete the first-launch checks.
 
-### Easy as pie, packs a powerful punch
+The assistant downloads, checks and installs. You approve macOS permissions and choose automatic updates. It can start Apple's Command Line Tools installer if needed. **[Prefer Terminal or a direct download?](#install-with-chatgpt--codex)**
 
-- **Multi-select.** Bundle more than one clipboard item into a single paste with ease.
-- **Intuitive interface**
-  - Start with the default drawer…an always-on tab that you can resize and place where you like on the edge of your screen.
-    - "Headless" (or should we call it, say, "Invisible") drawer mode lets you hide the tab, but keep its hot zone
-  - Advance when ready to the global shortcut to access ClipEdge without leaving your working document.
+Free and open source. **macOS 14 or newer · Apple Silicon and Intel.** Releases are signed but **not notarized**; browser downloads need macOS's *Open Anyway* step. [Installation details ↓](#binary-downloads-and-publication)
 
-- **Search inside pictures.** ClipEdge reads the text in copied images and screenshots on your Mac, so searching finds a word that only appears inside a picture.
+## A little less “where did I put that?”
 
-- **It knows what you copied.** A Figma layer is titled by its file, a Keynote slide shows its picture, a file shows its path and size, and a copy from any other app is named after that app. Rich text, JSON, Markdown and other declared formats preview through Quick Look. Flip any card over (**Command–I**) to see every format it carries, and copy one of them on its own.
-  Remind me what the state is of the extensions / quicklook stuff? Are Figma and Keynote examples, or are they currently the end-all-be-all of supported rich objects? -Al
+![A fictional Halloween-planning clipboard: a friend's costume message, angel-and-devil accessories, shopping links and a checklist, with a few clues to the rest of her week.](docs/demo/screenshot.png)
 
-- **Mistake-friendly.** Every step has a way back. Installs and updates move the old app to the Trash and print the command that restores it; the Updates menu has _Go Back_. Nothing deletes your history except _Clear History_.
-  Review language above for elementary mistakes and potential for miscommunication. -Al
+Costume plans and the bits of a day. Both captures use the same [invented history](docs/demo/README.md), with no real clipboard data.
 
-- **Automatic free space monitoring.** Your history grows to 1% of your disk's free space, never more, letting the oldest items go first. When that 1% drops under 1 GB, a 💾⚠️ appears beside the item count; rest the pointer on it to see how full your disk is and how little of it ClipEdge takes.
+### Made for my mom. Kept for myself.
 
-## Nerd sniping
+I built ClipEdge to save my mom trips between windows. Testing it meant satisfying my own keyboard habit, too. Start with the drawer; the deeper tools are there when you want them.
 
-- **Trivial source install** Tell an assistant with Terminal access `build <https://github.com/clozach/ClipEdge` → it does the rest! No Homebrew, Node, Xcode GUI or paid developer account.
-  Review language above for elementary mistakes and potential for miscommunication. -Al
-- **Paste with precision or demote to plain text.** App data goes back byte for byte, so a slide pasted from the history is the slide, not a picture of it. `⌃⌘⏎` (or click a button) to paste as plain text.
-- **Access raw clipboard data!** Clipboard entries contain metadata that's usually opaque to the user. ClipEdge surfaces these data structures down to raw bytes with ⌘I`.
-- **Small and dependency-free.** About 17,000 lines of Swift, no third-party frameworks (not even for updates), MIT licensed, universal binary.
+Built with ChatGPT and Claude, used daily, personally maintained. No promise of support or complete independent code audit. [Before you rely on it ↓](#before-you-rely-on-it)
+
+---
 
 ## Before you rely on it
 
-I built ClipEdge for two people: me and my mom. We use it every day on our Macs, and I check it against native test fixtures, not against the wider world. Read these before putting it on yours.
+- **Local history is not encrypted by ClipEdge.** Sensitive content can remain on disk or in backups. Copies explicitly marked concealed or transient are skipped; that is not a detector for every secret. [Privacy and storage](#privacy-and-storage)
+- **macOS only.** No iPhone app or sync between Macs. Daily use is on Apple Silicon; the release also includes an Intel build.
+- **Permissions matter.** Accessibility and Input Monitoring enable paste delivery and input observation. Approve them deliberately. [First launch](#first-launch-on-this-mac)
+- **Deletion has limits.** Deleting a saved entry is not undoable in ClipEdge, and the oldest entries are automatically removed to meet its storage budget. Restoring an older app does not rewind your history. [Storage](#existing-tab-location-and-history) · [Undo an app update](#undo-an-update)
+- **English-first, personally maintained.** There is no localization. [Issues and feedback](https://github.com/clozach/ClipEdge/issues) are welcome; a response or fix may take time or may not happen.
 
-- **macOS 14 or newer, nothing else.** No iOS, no Windows, no sync between Macs. (Yet?)
-- **Signed, not notarized.** Releases carry my Apple Development certificate, not a Developer ID. A ZIP downloaded in a browser gets blocked by Gatekeeper on first launch; the install script sidesteps that by leaving no quarantine mark. Every release has to be signed with the same certificate, which is why there's one maintainer and no CI.
-- **It needs to watch your Mac** (just like any other clipboard manager). Accessibility and Input Monitoring permissions are required to detect copies and deliver pastes. Grant them with the same care you'd give any clipboard manager.
-- **History is plain text on disk.** `~/Library/Application Support/ClipEdge/History.store/` isn't encrypted. Anything you copy that isn't marked concealed stays there until you delete it, including on a shared or backed-up Mac.
-- **Keyboard-first, English-first.** Single-key shortcuts follow Latin letters; other layouts use the keys in the same positions. There's no localization.
-- **Some chords are fixed.** The Settings shortcuts for Reset, undo and redo can't be reassigned yet.
-  Will not fix. -Al
-- **One developer, AI-assisted.** I wrote the code with ChatGPT and Claude, under my direction. The public repository is a snapshot of my private canonical source; while feedback via GitHub Issues is welcome, you'll probably want to keep your expectations-of-a-desired-response knob set to _Very Low_.
-  Review language above for elementary mistakes and potential for miscommunication. -Al
-- **Intel is built, Apple Silicon is lived on.** The universal ZIP includes Intel, but my daily use is on Apple Silicon.
-  Q: How much smaller is it with no I., just A.S.? -Al
-
----
-
-> **Below this line is the operating manual: installation, controls, updates and maintainer notes.**
-
----
-
-A local clipboard drawer for macOS 14 or newer, including **macOS Tahoe 26**. Keep recent text, images and files beside the screen; search them, preview them, and pick one up for pasting, or press **Option–Command–\\** and choose one by keyboard. The app needs no server or subscription. A released copy can optionally look on GitHub once a day for a newer version (see [Updates](#updates)). An ordinary public source build makes no network connections. The maintainer copy also checks GitHub release status; see [Maintainer publication](#maintainer-publication).
+The sections below are the operating manual.
 
 ## Install with ChatGPT / Codex
 
@@ -88,7 +67,7 @@ Clone `https://github.com/clozach/ClipEdge.git` into a folder under your home di
 bash tools/install-release.sh
 ```
 
-It downloads the release, checks its checksum and signature, moves any previous ClipEdge to the Trash, installs `~/Applications/ClipEdge.app` and opens it; a failure restores the previous app. The release is signed with one certificate and keeps itself up to date, so macOS permissions are approved once (see [Updates](#updates)). If the latest release is not such a copy, the script changes nothing and exits with status 3; build from source instead.
+It downloads the release, checks its checksum and signature, moves any previous ClipEdge to the Trash, installs `~/Applications/ClipEdge.app` and opens it; a failure restores the previous app. The release is signed and offers automatic updates when enabled, and compatible signing normally retains macOS permissions across updates (see [Updates](#updates)). If the latest release is not such a copy, the script changes nothing and exits with status 3; build from source instead.
 
 ## Build from source
 
@@ -122,25 +101,49 @@ Settings → **Hide drawer tab** hides the tab in both closed and open views. Un
 
 **Show Clipboard / Hide Clipboard** is a display toggle. Its default global shortcut is **⌃⌥⌘Space** (Control–Option–Command–Space); record a different combination under _Global Show / Hide Clipboard shortcut_ in Settings. It stays open when the pointer moves away. A drawer you open Settings from, with its gear or by right-clicking its tab, also stays while Settings is open; once Settings closes, moving away closes it again. Press the command again to close. Esc steps out one level at a time: a held item (Quick Look's included), then selecting (every mark let go), then a search, then the drawer; with the keyboard in Quick Look's raw data, Esc first gives it back to the cards.
 
-**Keys in the drawer.** While its cards hold the keyboard, single keys work as in Gmail: **0**–**3** show All, Text, Images and Other (each tab shows its key), **/** puts the keyboard in the search with its text selected (⌘F too), **,** opens Settings as the gear does, keeping the drawer open while Settings is, **S** selects several cards (**A** all of them; the selection's panel beside the drawer copies, opens or deletes them, asking first), **I** turns Quick Look to the card's raw data, and **T** puts the keyboard in its text (again for the next; Page Up and Page Down scroll it). The keypad's 0–3 work too; a comma typed with ⇧ still opens Settings, as a slash does on layouts that type it with ⇧. With any other modifier (⇧0, ⌥F and the like) they are ordinary keys, and in the search every character is text. The Option–Command–\\ window keeps **⌘0**–**⌘3** and **⌘F**: its search always holds the keyboard there, so a bare 1 types a 1. Wherever ClipEdge names a key after a word (a tab, a button, a hint), the key sits in its own darker cap, so *Images* [1] never reads as two images.
+**Keys in the drawer.** While its cards hold the keyboard, single keys work as in Gmail: **0**–**3** show All, Text, Images and Other (each tab shows its key), **/** puts the keyboard in the search with its text selected (⌘F too), **,** opens Settings as the gear does, keeping the drawer open while Settings is, **S** selects several cards (**A** all of them; the selection's panel beside the drawer copies, opens or deletes them, asking first), **I** turns Quick Look to the card's raw data, and **T** puts the keyboard in its text (again for the next; Page Up and Page Down scroll it). The keypad's 0–3 work too; a comma typed with ⇧ still opens Settings, as a slash does on layouts that type it with ⇧. With any other modifier (⇧0, ⌥F and the like) they are ordinary keys, and in the search every character is text. The Option–Command–\\ window keeps **⌘0**–**⌘3** and **⌘F**: its search always holds the keyboard there, so a bare 1 types a 1. Wherever ClipEdge names a key after a word (a tab, a button, a hint), the key sits in its own darker cap, so *Images* [2] never reads as two images.
 
 **Width and sliding.** Drag the drawer's free edge (the inner edge of a drawer at a side; either side edge of one at the top, which widens both ways) to make it wider or narrower. The width is kept with the tab's position, between what the drawer's contents need and 90% of the screen; a narrow drawer puts Select at the end of the count line. Drag the tab across its wall to pull the drawer open or push it shut by hand: let go and it finishes the way you flicked it, or, moving slowly, the way it was more than halfway to going. A drag along the wall still moves the tab, to another edge too.
 
 Opening by hover or clicking the visible tab keeps the usual close grace, also while Settings is open; when a drawer opened over Settings closes, Settings gets the keyboard back. A hidden tab retains delayed hover; a saved _Click to open_ choice temporarily uses instant hover until the tab returns. Both directions slide over 300 ms, keeping the contents full-size; macOS **Reduce Motion** skips the slide. Settings changes apply immediately, stay open for comparison, and persist across relaunch. _Use Default_ reverses a shortcut change; toggling _Hide drawer tab_ off restores the tab. Settings scrolls on smaller displays.
 
-Settings' seven number fields work alike: **Hover delay** under _Open the drawer_ (0–2 s, used only by _Delayed hover_; dimmed otherwise), **Maximum close delay** under _Close the drawer_ (0–3 s), under **Drawer motion**, how long opening and closing each take (0–1500 ms; 0 is at once; the default, 300 ms, is the slide described above), and under **Sizes**, **Text size** (80–200%: every ClipEdge window and panel draws its words, symbols and spacing that much larger, Settings included; the drawer keeps its width and lays out within it), **Thumbnail size** (50–300%: the picture at the start of each row; the row grows once the picture needs more) and **Preview size** (50–200%: Quick Look, beside the drawer and at the pointer). Each slide starts and stops softly; a slide already under way keeps the duration it started with. A dimmed field (the hover delay outside _Delayed hover_, both delays while the drawer is off) takes no drag, typing or undo, Tab passes it, and pointing at it says why it is dimmed. **Gestures:** drag a field's handle left or right to scrub (one step per point of drag, from the first press even while another window has the keyboard; the drawer takes each value as you drag, and letting go makes the drag one undo step); click or Tab into the number and its text is selected (letters are stripped, so `300ms` reads as 300 and `0.35s` as 0.35, and in a delay a comma is the point, so `0,5` reads as 0.5; Return keeps it and selects it again, Esc puts the old number back and leaves the field; leaving any other way keeps what was typed: Tab, a press anywhere else in Settings (another field's handle and Reset included), another window taking the keyboard (the number stays selected), or closing Settings); ↑/↓ nudge the kept number by one step (10 ms, 0.05 s for a delay, 5% for a size) and ⇧↑/⇧↓ by ten, dropping any number typed but not kept, with presses within a second counting as one undo step; **Reset ⌥⌘R** returns all seven to their defaults (0.35 s, 0.5 s, 300 ms, 300 ms, and 100% for each size), undoable field by field. Hovering or focusing a field shows **↺ ⌘Z** 9 points above its top-right corner once there is something to undo, and **↻ ⇧⌘Z** just left of it once something was undone; each keeps its place whether the other shows, and neither moves anything. The chords work on the field with the keyboard, and while one has it, only its magnets show; with no field holding the keyboard, they work on the hovered field. With a typed number not yet kept, the chords and the magnets undo and redo the typing first. ⌘A, ⌘C, ⌘X and ⌘V work in the fields as in the search. Esc with no field or recorder holding the keyboard closes Settings; a held Esc's repeats do not. Undo history lives in memory; only the current values persist. The chords for Reset, undo and redo are fixed for now; Settings cannot reassign them.
+Settings' seven number fields work alike: **Hover delay** under _Open the drawer_ (0–2 s, used only by _Delayed hover_; dimmed otherwise), **Maximum close delay** under _Close the drawer_ (0–3 s), under **Drawer motion**, how long opening and closing each take (0–1500 ms; 0 is at once; the default, 300 ms, is the slide described above), and under **Sizes**, **Text size** (80–200%: every ClipEdge window and panel draws its words, symbols and spacing that much larger, Settings included; the drawer keeps its width and lays out within it), **Thumbnail size** (50–300%: the picture at the start of each row; the row grows once the picture needs more) and **Preview size** (50–200%: Quick Look, beside the drawer and at the pointer). Each slide starts and stops softly; a slide already under way keeps the duration it started with. A dimmed field (the hover delay outside _Delayed hover_, both delays while the drawer is off) takes no drag, typing or undo, Tab passes it, and pointing at it says why it is dimmed. **Gestures:** drag a field's handle left or right to scrub (one step per point of drag, from the first press even while another window has the keyboard; the drawer takes each value as you drag, and letting go makes the drag one undo step); click or Tab into the number and its text is selected (letters are stripped, so `300ms` reads as 300 and `0.35s` as 0.35, and in a delay a comma is the point, so `0,5` reads as 0.5; Return keeps it and selects it again, Esc puts the old number back and leaves the field; leaving any other way keeps what was typed: Tab, a press anywhere else in Settings (another field's handle and Reset included), another window taking the keyboard (the number stays selected), or closing Settings); ↑/↓ nudge the kept number by one step (10 ms, 0.05 s for a delay, 5% for a size) and ⇧↑/⇧↓ by ten, dropping any number typed but not kept, with presses within a second counting as one undo step; **Reset ⌥⌘R** returns all seven to their defaults (0.35 s, 0.5 s, 300 ms, 300 ms, and 100% for each size), undoable field by field. Hovering or focusing a field shows **↺ ⌘Z** 9 points above its top-right corner once there is something to undo, and **↻ ⇧⌘Z** just left of it once something was undone; each keeps its place whether the other shows, and neither moves anything. The chords work on the field with the keyboard, and while one has it, only its magnets show; with no field holding the keyboard, they work on the hovered field. With a typed number not yet kept, the chords and the magnets undo and redo the typing first. ⌘A, ⌘C, ⌘X and ⌘V work in the fields as in the search. Esc with no field or recorder holding the keyboard closes Settings; a held Esc's repeats do not. Undo history lives in memory; only the current values persist. The chords for Reset, undo and redo are fixed; Settings cannot reassign them. The global history-window and plain-text-paste shortcuts are also fixed. The drawer toggle and Quick Look shortcuts are configurable.
 
 ## Updates
 
-**A released copy** (installed by `tools/install-release.sh`, or updated from one) keeps itself up to date:
+**A released copy** (installed by `tools/install-release.sh`, or downloaded from Releases) can keep itself up to date when you opt in:
 
-- On first launch a small window asks once: _Keep ClipEdge up to date automatically?_ It does not take the keyboard, so typing elsewhere cannot answer it. The answer is a setting with no expiry: ClipEdge menu bar icon → **Updates** → _Update Automatically_ turns it on or off at any time. Until it is answered, nothing is requested from the network.
-- With updates on, ClipEdge asks GitHub once a day for the latest release (one request; it carries the ClipEdge version and nothing about the person or the clipboard). A newer release is downloaded, and macOS checks that it is the same app signed by the same developer as the running copy. A download that fails that check, or that is not newer, is discarded and never opened.
+- On first launch a small window asks once: _Keep ClipEdge up to date automatically?_ It does not take the keyboard, so typing elsewhere cannot answer it. The answer is a setting with no expiry: ClipEdge menu bar icon → **Updates** → _Update Automatically_ turns it on or off at any time. It makes no automatic update request before you opt in. You can also request a check yourself from the Updates menu.
+- With updates on, ClipEdge checks GitHub once a day for the latest release; failed checks retry after an hour. Requests include the ClipEdge version and ordinary network metadata, but no clipboard content or analytics. A newer release is downloaded, and macOS checks that it is the same app signed by the same developer as the running copy. A download that fails that check, or that is not newer, is discarded and never opened.
 - The update installs when ClipEdge is not in use: nothing held, no ClipEdge window open, and the keyboard and mouse still for two minutes. ClipEdge saves the history, swaps itself and reopens. The previous version goes to the Trash.
-- Because every release has the same signer, macOS keeps its Accessibility and Input Monitoring approvals across updates.
+- Compatible signing normally preserves Accessibility and Input Monitoring approvals across updates. If macOS asks again, approve the installed app deliberately.
 - **Updates** in the menu also offers _Check for Updates Now_, _What's New_ (the release notes) and _Go Back_ to the previous version while it is still in the Trash. Going back turns automatic updates off, so the older version stays.
 
 **A copy built from source** has no update feed and never updates itself. An ordinary public source build makes no network requests. Its **Updates** menu says so and links to the release.
+
+## Search and previews
+
+Search works within All, Text, Images or Other. It matches text, item titles, copy times and text recognized in images by Apple Vision on your Mac. Files can also contribute text already indexed by Spotlight. Image recognition runs in the background; a newly copied picture may take a moment to become searchable. Web links are not fetched for previews.
+
+**Other is for more than files.** Figma layers, Keynote slides and other app-specific clipboard formats are examples, not a closed list of supported apps. ClipEdge keeps an entry's captured formats together, names recognized data, and uses any picture it carries as a preview. Whether another app accepts a format depends on that app. A file entry points to the original file; moving or deleting that file can make it unavailable.
+
+Quick Look uses the previewers already installed on your Mac. Declared rich text, JSON, Markdown, CSV, XML and other formats are handed to those previewers as typed files. ClipEdge has no separate extension marketplace. A Figma layer may show its file name, layer count and link rather than a rendered design; *Copy as PNG* in Figma supplies a picture.
+
+## Copying and pasting
+
+In the history window, **Return** reuses the selected item's saved clipboard formats and pastes into the app you were using. **Control–Command–Return** pastes its plain-text representation. **Control–Command–V** does the same for the current clipboard without opening ClipEdge. Plain text means words for text, paths for files, and descriptive facts for pictures; it is not an OCR-to-text command.
+
+**Select** lets you mark several items and **Copy as text** or **Paste as text**, joining their plain-text representations with newlines in the order shown. It does not combine arbitrary rich objects into one rich paste. Selection also offers opening in Preview and confirmed deletion.
+
+**I** in the drawer or **Command–I** in the window turns the preview over to the saved formats. You can inspect and copy an individual format. The display limits each text view to 64 KB and each binary preview to 512 bytes; its Copy action takes the full format (decoded text is copied as plain text).
+
+## Privacy and storage
+
+ClipEdge stores clipboard history locally and does not upload it. There is no account, analytics service or sync. Copies marked concealed or transient by the source app are skipped. Apps that do not mark a secret can still have it recorded: do not treat clipboard history as a password vault.
+
+**History is not encrypted by ClipEdge.** Its saved text, pictures and app data can be read by someone or software with access to your user files, and may appear in your backups. You can delete entries or clear history, but ClipEdge cannot erase copies in backups, original files, or other apps' caches.
+
+Public source builds make no network requests of their own. Released builds contact GitHub for [updates](#updates) when you enable automatic checks or ask for a manual check. Opening a copied link or sending an item to another app follows that app's behavior. The canonical maintainer build additionally checks publication status.
 
 ## Existing tab location and history
 
@@ -148,18 +151,18 @@ Updates retain **`local.codex.ClipEdge`** as the bundle identifier and **`ClipEd
 
 - Settings/tab position: `~/Library/Preferences/local.codex.ClipEdge.plist` (managed by macOS preferences).
 - History: `~/Library/Application Support/ClipEdge/History.store/` (an index, then each item's formats in its own folder, and the text read from its pictures). A history saved before 2026-10-16 was one file, `History.plist`; the first launch of a newer ClipEdge copies it into the store and leaves the file as it was, so an older ClipEdge still opens it. Once you are happy with the newer one, you can move `History.plist` to the Trash.
-- How much: as many items as fit in 1% of the free space on that disk (measured as copies arrive), oldest first out; at most 20,000. When 1% of free space is under 1 GB, a 💾⚠️ appears before the item count in the drawer and the Option–Command–\\ window; rest the pointer on it for the disk as one bar: *Used*, *ClipEdge* and *Free*, each with its size and percent. Resting the pointer on the item count shows the same bar, without the warning, whatever the free space.
+- How much: a budget based on 1% of the free space on that disk (refreshed as copies arrive, at most once a minute), oldest entries removed first; at most 20,000. The newest entry is kept even if it alone exceeds the budget. When 1% of free space is under 1 GB, a 💾⚠️ appears before the item count in the drawer and the Option–Command–\\ window; rest the pointer on it for the disk as one bar: *Used*, *ClipEdge* and *Free*, each with its size and percent. Resting the pointer on the item count shows the same bar, without the warning, whatever the free space.
 - Missing/rearranged display: the app chooses an available display and clamps the tab to its usable area. Exact screen coordinates can therefore change with display configuration.
 
-Before an update, note the visible tab's edge/location. After it opens, compare. **Do not run `defaults delete`, copy another person's preferences/history, or delete Application Support to troubleshoot installation.** If an older app has a different bundle identifier or schema, stop and inspect its settings before migration; do not promise preservation by name alone. Mom's actual Tahoe device remains a required physical check.
+Before an update, note the visible tab's edge/location. After it opens, compare. **Do not run `defaults delete`, copy another person's preferences/history, or delete Application Support to troubleshoot installation.** If an older app has a different bundle identifier or schema, stop and inspect its settings before migration; do not promise preservation by name alone.
 
 ## First launch on this Mac
 
-macOS permissions belong to this user and this app's signature, not to the source repository. A released copy keeps them across its own updates. A copy built without a certificate gets a new signature with every build.
+macOS permissions belong to this user and this app's signature, not to the source repository. Compatible signing normally keeps approvals across release updates. A copy built without a certificate gets a new signature with every build.
 
-1. In System Settings → Privacy & Security, grant ClipEdge **Accessibility** and **Input Monitoring** when requested for paste detection/delivery. Quit/reopen after changing grants. Permission prompts cannot be approved by a README or copied from another Mac. Moving from a copy built on this Mac to a released copy changes the signature once: remove the old ClipEdge entry (−) in both lists, then approve the new one.
+1. In System Settings → Privacy & Security, grant ClipEdge **Accessibility** and **Input Monitoring** when requested for paste detection/delivery. Quit/reopen after changing grants. Permission prompts cannot be approved by a README or copied from another Mac. Moving from an ad-hoc local build to the signed release may require reapproval. If macOS requests it or input stops working, remove the old ClipEdge entry (−) in both lists, approve the installed copy, then reopen it.
 2. If a locally built update stops receiving input, remove/re-add the installed ClipEdge in those permission lists. A stable signing certificate can reduce repeated approvals; `CLIPEDGE_SIGN_IDENTITY` selects a local code-signing identity. The build otherwise selects a sole valid identity, or warns and uses ad-hoc signing.
-3. Copy harmless test text. Check history, All/Images/Text/Other search, and **Control–Option–Space** for Quick Look. In the drawer, Space toggles preview and arrows follow the visible tab/search results. While an item follows the pointer, Command-click an empty editable document to paste it there; a plain click keeps holding the item, and Command-click on a link or list row keeps its usual meaning. Accessibility policy tests do not substitute for this physical check. Then press **Option–Command–\\** in any app: the history window opens with an empty search and the newest item selected (the drawer, too, opens with an empty search, on the tab it had unless something copied since it last opened would be hidden there; then on All). Type to search; the same shortcut or the arrow keys choose; Command–0 to 3 show All, Text, Images or Other. Return pastes into the app you were in, Control–Command–Return pastes plain text, Command–C picks the item up without pasting, Command–O opens it in Preview, Tab offers apps to send the item to (Left Arrow goes back), Command–Delete twice deletes the item for good (holding it down counts as one press). Command–S selects several (Return or a click marks each, Shift–Command–A all of them), and the selection's panel copies, pastes, opens or deletes them, asking first; nothing but the menu bar's Clear History deletes the whole history. Command–I turns the card over to its raw data, where Command–T moves the keyboard from text to text (the arrows move in it, with Shift they select) and Page Up and Page Down scroll. Escape steps out one level at a time: a waiting delete, the raw data's text, the turned card, selecting, the search, then the window. **Control–Command–V** pastes the clipboard as plain text with no ClipEdge window open.
+3. Copy harmless test text. Check history, All/Text/Images/Other search, and **Control–Option–Space** for Quick Look. In the drawer, Space toggles preview and arrows follow the visible tab/search results. While an item follows the pointer, Command-click an empty editable document to paste it there; a plain click keeps holding the item, and Command-click on a link or list row keeps its usual meaning. Accessibility policy tests do not substitute for this physical check. Then press **Option–Command–\\** in any app: the history window opens with an empty search and the newest item selected (the drawer, too, opens with an empty search, on the tab it had unless something copied since it last opened would be hidden there; then on All). Type to search; the same shortcut or the arrow keys choose; Command–0 to 3 show All, Text, Images or Other. Return pastes into the app you were in, Control–Command–Return pastes plain text, Command–C picks the item up without pasting, Command–O opens it in Preview, Tab offers apps to send the item to (Left Arrow goes back), Command–Delete twice deletes the item for good (holding it down counts as one press). Command–S selects several (Return or a click marks each, Shift–Command–A all of them), and the selection's panel copies, pastes, opens or deletes them, asking first; selecting all and deleting, or using the menu bar's Clear History, can remove the whole history. Command–I turns the card over to its raw data, where Command–T moves the keyboard from text to text (the arrows move in it, with Shift they select) and Page Up and Page Down scroll. Escape steps out one level at a time: a waiting delete, the raw data's text, the turned card, selecting, the search, then the window. **Control–Command–V** pastes the clipboard as plain text with no ClipEdge window open.
 4. In Figma in Chrome, copy a layer: ClipEdge titles it "1 Figma layer from" its file and explains it. Paste it back into Figma with Return or Command–V; Control–Command–V pastes a link to the layer instead. Copy a text layer: ClipEdge titles it by its words, lists it under Text and Other, and Control–Command–V pastes its words. Copy a slide in Keynote (or anything from an app with its own clipboard format): ClipEdge shows its picture, names the app among its facts ("iWork data · 3 formats"), lists it under Images and Other, and its card lists every format; a copy without a picture reads "iWork data" with a box symbol. Return pastes it back into Keynote unchanged.
 5. In either search, type a word, press **Command–A**, then type another: the word is replaced. Command–X cuts the selected search text, Command–V pastes text into the search, Command–Z undoes and Shift–Command–Z redoes. In the drawer's search, Command–C copies the selected text; in the history window, Command–C keeps its clipboard-item pickup action.
 6. Confirm the tab remains where it was. Choose **Open at Login** in the ClipEdge menu if wanted. Optional Dock pin: `xcrun swift tools/pin-dock.swift`. The app runs outside Command-Tab; its Dock pin is a launch target.
@@ -170,7 +173,7 @@ Verify package integrity with:
 codesign --verify --strict "$HOME/Applications/ClipEdge.app"
 ```
 
-A valid signature is not a claim of Apple notarization or granted permissions. Report the installed source commit (`git rev-parse --short HEAD`), signing mode and any remaining first-launch steps.
+A valid signature is not a claim of Apple notarization or granted permissions. Report the installed app version and release tag, signing mode and any remaining first-launch steps. For a source build, also report its source commit (`git rev-parse --short HEAD`); a release installer's checkout commit does not identify the downloaded app.
 
 ## Undo an update
 
@@ -186,13 +189,13 @@ It quits ClipEdge, moves the new app to Trash and restores prior bundles to thei
 
 Created by **Chris Lozac'h** (<clozach@gmail.com>), with direction through prompting, a personal knowledge vault and development tooling, assisted by ChatGPT.app and Claude.app. Code and the bundled icon are released under the [MIT License](LICENSE). See [icon provenance](Resources/README.md).
 
-[The latest release](https://github.com/clozach/ClipEdge/releases/latest) is a universal ZIP for Apple Silicon and Intel with a `SHA256SUMS` file. `bash tools/install-release.sh` is the recommended way to install it: it checks the checksum and signature and leaves no quarantine mark for Gatekeeper to object to.
+[The latest release](https://github.com/clozach/ClipEdge/releases/latest) is a universal ZIP for Apple Silicon and Intel with a `SHA256SUMS` file. `bash tools/install-release.sh` checks the checksum and signature before installing. This scripted download does not carry the browser quarantine mark; it does not turn off Gatekeeper or notarize the app.
 
 To install a ZIP downloaded in a browser by hand: quit ClipEdge using its menu, move the previous `.app` to Trash, unzip the download, and move `ClipEdge.app` into your own `~/Applications` folder. The release is signed but **not notarized**, so macOS blocks a browser download at first launch; allow it under Privacy & Security → Open Anyway only for a release you trust. Do not disable Gatekeeper/SIP or recursively strip quarantine. Leave Library preferences/history in place; keep the old app in Trash until the new one works.
 
-`bash tools/release.sh` prepares that ZIP and checksum under `.build/releases/`, signed with the maintainer's certificate and a signing timestamp, and carrying the update feed. It refuses to build an unsigned release: such a copy cannot update itself and loses its macOS permissions on every update. [CHANGES.md](CHANGES.md) holds the notes each release publishes; `VERSION` holds the version number.
+`bash tools/release.sh` prepares that ZIP and checksum under `.build/releases/`, signed with the maintainer's certificate and a signing timestamp, and carrying the update feed. It refuses to build an unsigned release: such a copy cannot meet the signed-update contract, and ad-hoc builds can require permission reapproval after rebuilding. [CHANGES.md](CHANGES.md) holds the notes each release publishes; `VERSION` holds the version number.
 
-Releases are built locally and uploaded to GitHub; no paid CI or signing service is required. GitHub Releases has no total release-size or bandwidth quota, and standard public-repository Actions runners are free. Apple Developer ID signing/notarization is a separate Apple Developer Program benefit ($99/year unless already enrolled). This project does not provision a paid service or signing certificate automatically. [GitHub Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases) · [Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) · [Apple memberships](https://developer.apple.com/support/compare-memberships/)
+Releases are built locally and uploaded to GitHub. This project does not provision a paid service or signing certificate automatically. See [Apple’s membership options](https://developer.apple.com/support/compare-memberships/) for Developer ID signing and notarization.
 
 ## Development
 
@@ -205,16 +208,16 @@ bash tools/test-self-update.sh  # a stand-in app updates itself, reopens and goe
 bash tools/build.sh         # current architecture; macOS 14 deployment target
 ```
 
-`just build/test/install/run/demo/watch` are optional conveniences. Only the watcher requires Node. Fixture/demo use must begin with normal ClipEdge quit: the app has one global shortcut/preview directory. `--demo` uses a named clipboard and disables cross-app delivery; `--demo-web-copies` adds made-up browser copies (Figma layers, HTML-only and rich text); `--demo-sample-history` shows a throwaway copy of your [sample history](#sample-history) in place of the invented fixtures. Tests use invented copies only. Screenshots use invented copies or your own curated sample, never your real history.
+`just build/test/install/run/demo/watch` are optional conveniences. Only the watcher requires Node. Fixture/demo use must begin with normal ClipEdge quit: the app has one global shortcut/preview directory. `--demo` uses a named clipboard and disables cross-app delivery; `--demo-web-copies` adds made-up browser copies (Figma layers, HTML-only and rich text); `--demo-sample-history` shows a throwaway copy of your [sample history](#sample-history) in place of the invented fixtures. Tests use invented copies only. Public screenshots use invented copies only; your own curated sample is for private captures. [README demo provenance and recording recipe](docs/demo/README.md) document the fictional history and native capture.
 
-`tools/export-source.sh NEW_DESTINATION` copies an allowlist of portable code/tests/tooling for publication. It excludes private development history, evidence, machine-specific capture recipes, build products and the old Finder-icon backup. The public repository is a distribution snapshot exported from the maintainer’s canonical development source. Upstream contributions are reconciled there before the next release; avoid independent, divergent edits.
+`tools/export-source.sh NEW_DESTINATION` copies an allowlist of portable code/tests/tooling for publication. It includes the README, its fictional demo assets, their portable capture recipe and the contributor checklist. It excludes private development history, evidence, machine-specific capture recipes, build products and the old Finder-icon backup. The public repository is a distribution snapshot exported from the maintainer’s canonical development source. Upstream contributions are reconciled there before the next release; avoid independent, divergent edits. Every source change includes a README review under [AGENTS.md](AGENTS.md#readme-review-on-every-source-change), updating affected claims and media in the same change or recording why no documentation change is needed.
 
 ## Sample history
 
 A second history for screenshots, decks and videos, so they show copies you chose rather than whatever you copied last.
 
 - **Switch.** Hold Option in the ClipEdge menu bar menu and choose **Use Sample History** (it stands in for *Save History Now*). The menu bar icon becomes theater masks and the menu's first item reads *Showing Sample History · Use Real History*. The choice survives relaunch.
-- **First switch seeds it.** Up to six passages of text (six words or more), four Figma copies, four links and four pictures from your own history, newest first. Files and app data stay out. If a kind is missing from your last 50 copies, the sample starts without it.
+- **First switch seeds it.** Up to six passages of text (six words or more), four Figma copies, four links and four pictures from your own history, newest first. Files and app data stay out. If a kind is missing from your retained history, the sample starts without it.
 - **Edit it by using it.** While the sample shows, a copy joins it and a delete removes it, and both are saved. Your own history is saved on the way in and not touched until you switch back; copies made meanwhile land in the sample only.
 - **Add from your own history.** In your own history, hold Option: *Clear History* becomes **Add “…” to Sample History**, naming the newest item. It reads *“…” Is in Sample History* once it is there.
 - **Reorder from Terminal.** With ClipEdge on your own history (it refuses otherwise, since a running sample would save over the edit):
