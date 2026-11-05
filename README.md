@@ -4,7 +4,7 @@
 
 > **Copy now. Find it when you need it.**
 
-![ClipEdge in action: the drawer slides open, browses text, pictures and files, then the keyboard window browses the same fictional history.](docs/demo/demo.gif)
+<a href="docs/demo/demo.gif"><img src="docs/demo/demo.gif" width="720" alt="ClipEdge in action: the drawer slides open, browses text, pictures and files, then the keyboard window browses the same fictional history."></a>
 
 ClipEdge remembers copied text, pictures, links and files. Reach for the drawer at your screen's edge, or open a searchable window without leaving your work.
 
@@ -12,10 +12,10 @@ ClipEdge remembers copied text, pictures, links and files. Reach for the drawer 
 
 ## Keep your train of thought
 
-- **Copy a few things. Paste when you're ready.** Bring back an earlier message, picture or file. Use the [drawer with your mouse](#drawer-controls) or the [keyboard window](#first-launch-on-this-mac).
-- **Find the words inside a screenshot.** Search text, links and text recognized in pictures. Image recognition happens on your Mac. [Search and previews ↓](#search-and-previews)
-- **Keep the original—or just the words.** Reuse an item's saved formats, paste without styling, or select several entries and combine their plain text. [Copying and pasting ↓](#copying-and-pasting)
-- **Keep your clipboard on your Mac.** No account, subscription, analytics or clipboard upload. Released copies offer optional automatic updates. [Privacy and storage ↓](#privacy-and-storage)
+- **Copy a few things. Paste when you're ready.** Retrieve earlier copies by mouse or keyboard. [Controls ↓](#drawer-controls)
+- **Find the words inside a screenshot.** Search your history, including image text recognized on your Mac. [Search ↓](#search-and-previews)
+- **Keep the original—or just the words.** Preserve formats, paste without styling, or combine several text copies. [Pasting ↓](#copying-and-pasting)
+- **Keep your clipboard on your Mac.** No account, subscription, analytics or clipboard upload. [Privacy ↓](#privacy-and-storage)
 
 ## Try ClipEdge
 
@@ -23,21 +23,17 @@ ClipEdge remembers copied text, pictures, links and files. Reach for the drawer 
 
 > Install https://github.com/clozach/ClipEdge using its latest signed release. Follow its AGENTS.md and complete the first-launch checks.
 
-The assistant downloads, checks and installs. You approve macOS permissions and choose automatic updates. It can start Apple's Command Line Tools installer if needed. **[Prefer Terminal or a direct download?](#install-with-chatgpt--codex)**
+The assistant downloads, verifies and installs. You approve macOS permissions and choose automatic updates; Apple's Command Line Tools may need a first-time setup. **[Prefer Terminal or a direct download?](#install-with-chatgpt--codex)**
 
 Free and open source. **macOS 14 or newer · Apple Silicon and Intel.** Releases are signed but **not notarized**; browser downloads need macOS's *Open Anyway* step. [Installation details ↓](#binary-downloads-and-publication)
 
 ## A little less “where did I put that?”
 
-![A fictional Halloween-planning clipboard: a friend's costume message, angel-and-devil accessories, shopping links and a checklist, with a few clues to the rest of her week.](docs/demo/screenshot.png)
+<a href="docs/demo/screenshot.png"><img src="docs/demo/screenshot.png" width="640" alt="A fictional Halloween-planning clipboard: a friend's costume message, angel-and-devil accessories, shopping links and a checklist, with a few clues to the rest of her week."></a>
 
-Costume plans and the bits of a day. Both captures use the same [invented history](docs/demo/README.md), with no real clipboard data.
+Costume plans and the bits of a day. Both captures use the same [invented history](docs/demo/README.md). Click either for full size.
 
-### Made for my mom. Kept for myself.
-
-I built ClipEdge to save my mom trips between windows. Testing it meant satisfying my own keyboard habit, too. Start with the drawer; the deeper tools are there when you want them.
-
-Built with ChatGPT and Claude, used daily, personally maintained. No promise of support or complete independent code audit. [Before you rely on it ↓](#before-you-rely-on-it)
+**Made for my mom. Kept for myself.** Built with ChatGPT and Claude to save her trips between windows—and satisfy my own keyboard habit. Used daily, personally maintained.
 
 ---
 
@@ -48,6 +44,7 @@ Built with ChatGPT and Claude, used daily, personally maintained. No promise of 
 - **Permissions matter.** Accessibility and Input Monitoring enable paste delivery and input observation. Approve them deliberately. [First launch](#first-launch-on-this-mac)
 - **Deletion has limits.** Deleting a saved entry is not undoable in ClipEdge, and the oldest entries are automatically removed to meet its storage budget. Restoring an older app does not rewind your history. [Storage](#existing-tab-location-and-history) · [Undo an app update](#undo-an-update)
 - **English-first, personally maintained.** There is no localization. [Issues and feedback](https://github.com/clozach/ClipEdge/issues) are welcome; a response or fix may take time or may not happen.
+- **No complete independent code audit.** Use it with that limitation in mind.
 
 The sections below are the operating manual.
 
