@@ -10,7 +10,9 @@ import AppKit
             fatalError("usage: readme-capture <costume-photo.png> <scratch-directory>")
         }
         let photo = URL(fileURLWithPath: CommandLine.arguments[1])
+        let photoData = try Data(contentsOf: photo)
         let root = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+        let rehearsing = ProcessInfo.processInfo.environment["CLIPEDGE_README_REHEARSE"] == "1"
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let previews = ClipboardMaterializer.usePrivateRoot()
         defer { try? FileManager.default.removeItem(at: previews) }
@@ -43,7 +45,7 @@ import AppKit
         text("Sunday reset: oat cappuccino, flowers, then the 11am mat class.")
         text("https://example.com/shop/angel-devil-duo")
         text("Maya: angel + devil costumes?? Silver + red boots, tiny bags, rooftop party at 9. I'm so in ✨")
-        copy([(.png, try Data(contentsOf: photo))])
+        copy([(.png, photoData)])
         let checklist = root.appendingPathComponent("Halloween duo — shopping list.pdf")
         try makePDF().write(to: checklist)
         board.clearContents(); board.writeObjects([checklist as NSURL]); store.saveNow()
@@ -73,60 +75,51 @@ import AppKit
         defer { drawer.stop() }
         let history = ClipboardHistoryController(store: store, paster: paster, previewService: drawer.previewService, panel: historyPanel)
         for panel in [drawerPanel, historyPanel, previewPanel] { panel.level = NSWindow.Level(rawValue: 901) }
+        drawer.sizes = { ClipboardSizes(text: 130, thumbnails: 110, preview: 80) }
+        history.sizes = { ClipboardSizes(text: 120, thumbnails: 110, preview: 80) }
+        drawer.applySizes()
         history.prepare = { nil }
         history.pickupMagnet = { false }
-        func drawerTab(_ tab: ClipboardBrowserTab) {
-            drawer.browser.tabs.selectedSegment = tab.rawValue
-            drawer.browser.tabs.sendAction(drawer.browser.tabs.action!, to: drawer.browser.tabs.target)
-        }
-        func windowTab(_ tab: ClipboardBrowserTab) {
-            history.view.tabs.selectedSegment = tab.rawValue
-            history.view.tabs.sendAction(history.view.tabs.action!, to: history.view.tabs.target)
-        }
         // Native screen region includes the edge and enough room for the history window.
-        let capture = NSRect(x: max(frame.minX, frame.maxX - 1130), y: max(frame.minY, frame.maxY - 790), width: min(1130, frame.width), height: min(790, frame.height))
+        let capture = NSRect(x: max(frame.minX, frame.maxX - 1000), y: max(frame.minY, frame.maxY - 740), width: min(1000, frame.width), height: min(740, frame.height))
+        historyPanel.placement = .centered(NSPoint(x: capture.midX, y: capture.midY))
+        previewPanel.placement = .left(capture.minX + 35, midY: capture.midY)
         let topY = screen.frame.maxY - capture.maxY
         let region = "\(Int(capture.minX)),\(Int(topY)),\(Int(capture.width)),\(Int(capture.height))"
         let info: [String: Any] = ["region": region, "fixtureOnly": true,
             "titles": store.entries.map(\.title), "screen": NSStringFromRect(screen.frame),
             "video": "macOS screencapture; real WindowServer frames; real drawer motion at standard 300ms"]
         try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys]).write(to: root.appendingPathComponent("capture.json"))
-        func captureStill() throws {
-            let task = Process(); task.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            task.arguments = ["-x", "-R" + region, root.appendingPathComponent("screenshot-raw.png").path]
-            try task.run(); task.waitUntilExit(); precondition(task.terminationStatus == 0)
+        // Setup happens before recording: useful populated first frame, stable native sizes.
+        drawer.show(on: screen, animated: false)
+        let input = ReadmeInput(frame: capture, output: root.appendingPathComponent(rehearsing ? "rehearsal.json" : "timeline.json"))
+        input.overlay.cursor = NSPoint(x: capture.width - 230, y: 150)
+        input.cue("Click Images")
+        CGDisplayHideCursor(CGMainDisplayID())
+        defer { CGDisplayShowCursor(CGMainDisplayID()); input.panel.orderOut(nil) }
+        let recording = Process()
+        // This defer runs before the cursor/backdrop/window cleanups, including on
+        // an assertion thrown by the input screenplay. Only our recorder is stopped.
+        defer {
+            if recording.isRunning { recording.terminate(); recording.waitUntilExit() }
         }
-        // Hero: both actual windows share the exact same fictional store.
-        drawer.show(on: screen, animated: false); drawerTab(.all)
-        _ = drawer.browser.canvas.answer(.quickLook, image)
-        settle(2.0)
-        previewPanel.setFrameOrigin(NSPoint(x: capture.minX + 35, y: capture.midY - previewPanel.frame.height / 2))
-        settle(0.3); try captureStill()
-        history.close(); store.cancelStaging(); drawer.hide(animated: false); settle(0.7)
-        if ProcessInfo.processInfo.environment["CLIPEDGE_README_STILL_ONLY"] == "1" { return }
-        try? FileManager.default.removeItem(at: root.appendingPathComponent("demo-raw.mov"))
-        let recording = Process(); recording.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        recording.arguments = ["-x", "-v", "-V20", "-R" + region, root.appendingPathComponent("demo-raw.mov").path]
-        try recording.run(); settle(1.0)
-        func preview(_ entry: ClipboardEntry) {
-            store.previewInCarousel(entry, among: drawer.browser.visibleEntries)
-            settle(0.15)
-            previewPanel.setFrameOrigin(NSPoint(x: capture.minX + 35, y: capture.midY - previewPanel.frame.height / 2))
+        if !rehearsing {
+            try? FileManager.default.removeItem(at: root.appendingPathComponent("demo-raw.mov"))
+            recording.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            recording.arguments = ["-x", "-v", "-V38", "-R" + region, root.appendingPathComponent("demo-raw.mov").path]
+            try recording.run()
         }
-        drawer.show(on: screen); settle(0.4); preview(image); settle(1.65)
-        drawerTab(.images); preview(image); settle(1.85)
-        drawerTab(.text); preview(note); settle(1.85)
-        drawerTab(.other); preview(list); settle(1.65)
-        drawer.hide(animated: true); settle(0.8)
-        history.hotKeyPressed(); historyPanel.setFrameOrigin(NSPoint(x: capture.midX - 400, y: capture.midY - 235)); settle(1.7)
-        windowTab(.images); history.view.canvas.choose(image.id); settle(1.8)
-        windowTab(.text); history.view.canvas.choose(note.id); settle(1.1)
-        // Use the real Copy action: closes history and changes only our named board.
-        history.view.footer.items.first { $0.title.hasPrefix("Copy") }?.action(); settle(0.7)
-        drawer.show(on: screen); drawerTab(.all); settle(1.6)
-        drawer.hide(animated: true); settle(1)
-        while recording.isRunning { settle(0.1) }
-        precondition(recording.terminationStatus == 0, "screen recording failed")
+        input.began = ProcessInfo.processInfo.systemUptime
+        let story = ReadmeStory(drawer: drawer, history: history, drawerPanel: drawerPanel, historyPanel: historyPanel,
+                                magnet: magnet, store: store, board: board, image: image, note: note, file: list,
+                                photo: photoData, input: input)
+        let summary = try story.run()
+        try JSONSerialization.data(withJSONObject: info.merging(summary) { _, new in new }, options: [.prettyPrinted, .sortedKeys])
+            .write(to: root.appendingPathComponent(rehearsing ? "rehearsal-summary.json" : "capture.json"))
+        if !rehearsing {
+            while recording.isRunning { settle(0.1) }
+            precondition(recording.terminationStatus == 0, "screen recording failed")
+        }
         history.close()
     }
 
@@ -148,7 +141,21 @@ import AppKit
     }
 }
 
+private enum CapturePlacement {
+    case native, centered(NSPoint), left(CGFloat, midY: CGFloat)
+}
+
 private final class CapturePanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    var placement = CapturePlacement.native
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        var frame = frameRect
+        switch placement {
+        case .native: break
+        case .centered(let center): frame.origin = NSPoint(x: center.x - frame.width / 2, y: center.y - frame.height / 2)
+        case .left(let x, let midY): frame.origin = NSPoint(x: x, y: midY - frame.height / 2)
+        }
+        super.setFrame(frame, display: flag)
+    }
 }

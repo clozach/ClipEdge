@@ -4,7 +4,7 @@
 
 > **Copy now. Find it when you need it.**
 
-<a href="docs/demo/demo.gif"><img src="docs/demo/demo.gif" width="720" alt="ClipEdge in action: the drawer slides open, browses text, pictures and files, then the keyboard window browses the same fictional history."></a>
+<a href="docs/demo/demo.gif"><img src="docs/demo/demo.gif" width="720" alt="A pointer selects Images, Text and Other in the drawer. On-screen keys show how to preview the costume photo, open Clipboard History and copy the photo. A click on the screen edge brings the drawer back."></a>
 
 ClipEdge remembers copied text, pictures, links and files. Reach for the drawer at your screen's edge, or open a searchable window without leaving your work.
 

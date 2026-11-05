@@ -10,7 +10,7 @@ mkdir -p "$destination/tools/publisher"
 cp tools/publisher/Identity.swift tools/publisher/IdentityMain.swift "$destination/tools/publisher/"
 cp ./*.swift README.md AGENTS.md CONTRIBUTING.md CHANGES.md VERSION Justfile .gitignore "$destination/"
 cp tests/*.swift "$destination/tests/"
-for file in build.sh install.sh install-release.sh update.sh Installer.swift test.sh test-search-editing.sh SearchEditingCapture.swift test-install.sh test-update.sh test-self-update.sh InstallTests.swift UpdateFixture.swift export-source.sh release.sh watch.mjs pin-dock.swift readme-capture.sh ReadmeCapture.swift; do
+for file in build.sh install.sh install-release.sh update.sh Installer.swift test.sh test-search-editing.sh SearchEditingCapture.swift test-install.sh test-update.sh test-self-update.sh InstallTests.swift UpdateFixture.swift export-source.sh release.sh watch.mjs pin-dock.swift readme-capture.sh ReadmeCapture.swift ReadmeInput.swift ReadmeStory.swift; do
     cp "tools/$file" "$destination/tools/"
 done
 cp docs/pull_request_template.md "$destination/docs/"
