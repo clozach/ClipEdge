@@ -1,6 +1,6 @@
 # Contributing
 
-Issues and small, focused contributions are welcome. This is a personally maintained project; response and release timing are not guaranteed. Read [AGENTS.md](AGENTS.md) before asking a coding assistant to build or change it.
+Issues and small, focused contributions are welcome, except for security problems: report those privately, as [SECURITY.md](SECURITY.md) describes. This is a personally maintained project; response and release timing are not guaranteed. Read [AGENTS.md](AGENTS.md) before asking a coding assistant to build or change it.
 
 ## Every source change includes a README review
 
